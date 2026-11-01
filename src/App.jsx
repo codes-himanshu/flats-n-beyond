@@ -84,7 +84,7 @@ export default function App() {
   }, []);
 
   // Admin Actions (Connected directly to MongoDB Atlas)
-  const handleAddProperty = async (newProp, passcode = 'admin123') => {
+  const handleAddProperty = async (newProp, passcode = 'Himan@1202') => {
     // Optimistic UI update
     setProperties((prev) => [newProp, ...prev]);
     try {
@@ -100,7 +100,7 @@ export default function App() {
     }
   };
 
-  const handleDeleteProperty = async (id, passcode = 'admin123') => {
+  const handleDeleteProperty = async (id, passcode = 'Himan@1202') => {
     setProperties((prev) => prev.filter((p) => p.id !== id));
     if (activePropertyModal?.id === id) {
       setActivePropertyModal(null);
@@ -114,7 +114,7 @@ export default function App() {
     }
   };
 
-  const handleResetToDefault = async (passcode = 'admin123') => {
+  const handleResetToDefault = async (passcode = 'Himan@1202') => {
     setProperties(INITIAL_PROPERTIES);
     try {
       await resetProperties(passcode);

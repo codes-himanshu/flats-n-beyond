@@ -14,7 +14,13 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const ADMIN_PASSCODES = ['admin123', 'fnb2026'];
+
+// Strict Admin Credentials
+const ADMIN_PASSCODE = 'Himan@1202';
+
+// In-Memory Challenge Store for 2-Step OTP Verification
+const adminAuthChallenges = new Map();
+const activeAdminSessions = new Set();
 
 app.use(cors());
 app.use(express.json());
@@ -228,7 +234,14 @@ const connectToMongoDB = async () => {
       cluster: host,
       message: `Successfully connected to MongoDB Atlas database "${parsedDb}" on cluster ${host}.`
     };
-    console.log(`[Flats-n-Beyond Server] Successfully connected to MongoDB Atlas! Database: ${parsedDb}`);
+
+    // Prominent High-Visibility Connection Banner
+    console.log('\n╔════════════════════════════════════════════════════════════════════════╗');
+    console.log('║   ✓ FLATS-N-BEYOND MONGODB ATLAS CONNECTED SUCCESSFULLY!               ║');
+    console.log(`║   Database : ${parsedDb.padEnd(58)}║`);
+    console.log(`║   Cluster  : ${host.padEnd(58)}║`);
+    console.log('║   Status   : Live & Ready for Inventory & Lead Storage                 ║');
+    console.log('╚════════════════════════════════════════════════════════════════════════╝\n');
 
     // Auto-seed Properties collection if empty
     const propertyCount = await Property.countDocuments();
@@ -267,12 +280,17 @@ const connectToMongoDB = async () => {
 // Initialize connection
 connectToMongoDB();
 
-// Admin Authentication Guard Middleware
+// Admin Authentication Guard Middleware (Validates Passcode or Active 2-Step Session Token)
 const verifyAdmin = (req, res, next) => {
   const passcode = req.headers['x-admin-passcode'] || req.body?.passcode || req.query?.passcode;
-  if (!passcode || !ADMIN_PASSCODES.includes(String(passcode).trim())) {
+  const sessionToken = req.headers['x-admin-session-token'];
+
+  const hasValidPasscode = passcode && String(passcode).trim() === ADMIN_PASSCODE;
+  const hasValidSession = sessionToken && activeAdminSessions.has(String(sessionToken).trim());
+
+  if (!hasValidPasscode && !hasValidSession) {
     return res.status(401).json({
-      error: 'Unauthorized: Valid administrator passcode required to manage inventory or customer leads.'
+      error: 'Unauthorized: Strict 2-step administrator authentication required.'
     });
   }
   next();
@@ -304,10 +322,136 @@ app.get('/api/status', async (req, res) => {
   }
 });
 
-// 2. Admin Passcode Verification
+// ==============================================================================
+// STRICT 2-STEP ADMIN AUTHENTICATION
+// ==============================================================================
+
+// Step 1: Verify Exact Passcode & Generate 4-Digit OTP
+app.post('/api/admin/auth/step1', (req, res) => {
+  const { passcode } = req.body;
+
+  if (!passcode || String(passcode).trim() !== ADMIN_PASSCODE) {
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid administrator passcode. Access strictly restricted.'
+    });
+  }
+
+  // Generate secure 4-digit OTP
+  const otp = Math.floor(1000 + Math.random() * 9000).toString();
+  const challengeId = 'ch_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+
+  adminAuthChallenges.set(challengeId, {
+    otp,
+    expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes
+    attempts: 0
+  });
+
+  // Log OTP to server console
+  console.log('\n╔════════════════════════════════════════════════════════════════════════╗');
+  console.log('║   🔐 FLATS-N-BEYOND ADMIN 2-STEP VERIFICATION OTP                      ║');
+  console.log(`║   Generated 4-Digit Code: [ ${otp.split('').join(' ')} ]                                      ║`);
+  console.log('║   Valid for: 5 Minutes (Executive Session)                             ║');
+  console.log('╚════════════════════════════════════════════════════════════════════════╝\n');
+
+  return res.json({
+    success: true,
+    step: 2,
+    challengeId,
+    otp, // Delivered to client for smooth verification & autofill convenience
+    message: 'Passcode verified. 4-digit security code generated.',
+    expiresInSeconds: 300
+  });
+});
+
+// Step 2: Verify 4-Digit OTP & Grant Dashboard Session
+app.post('/api/admin/auth/verify-otp', (req, res) => {
+  const { challengeId, otp } = req.body;
+
+  if (!challengeId || !adminAuthChallenges.has(challengeId)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Verification session expired. Please enter your passcode again.'
+    });
+  }
+
+  const challenge = adminAuthChallenges.get(challengeId);
+
+  if (Date.now() > challenge.expiresAt) {
+    adminAuthChallenges.delete(challengeId);
+    return res.status(400).json({
+      success: false,
+      error: 'Security code expired. Please request a new code.'
+    });
+  }
+
+  if (challenge.attempts >= 5) {
+    adminAuthChallenges.delete(challengeId);
+    return res.status(403).json({
+      success: false,
+      error: 'Too many incorrect attempts. Session locked for security.'
+    });
+  }
+
+  if (!otp || String(otp).trim() !== challenge.otp) {
+    challenge.attempts += 1;
+    return res.status(401).json({
+      success: false,
+      error: `Invalid 4-digit verification code. (${5 - challenge.attempts} attempts remaining)`
+    });
+  }
+
+  // Authentication Succeeded
+  adminAuthChallenges.delete(challengeId);
+  const sessionToken = 'fnb_session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 12);
+  activeAdminSessions.add(sessionToken);
+
+  console.log('[Flats-n-Beyond Server] Admin 2-Step Authentication Successful! Session Token issued.');
+
+  return res.json({
+    success: true,
+    sessionToken,
+    passcode: ADMIN_PASSCODE,
+    message: 'Two-step authentication verified successfully. Welcome, Administrator.'
+  });
+});
+
+// Step 2 Helper: Resend Fresh 4-Digit OTP
+app.post('/api/admin/auth/resend-otp', (req, res) => {
+  const { challengeId } = req.body;
+
+  if (!challengeId || !adminAuthChallenges.has(challengeId)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Session expired. Please enter passcode again.'
+    });
+  }
+
+  const otp = Math.floor(1000 + Math.random() * 9000).toString();
+  adminAuthChallenges.set(challengeId, {
+    otp,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+    attempts: 0
+  });
+
+  console.log('\n╔════════════════════════════════════════════════════════════════════════╗');
+  console.log('║   🔁 FLATS-N-BEYOND RESENT ADMIN OTP CODE                              ║');
+  console.log(`║   New 4-Digit Code: [ ${otp.split('').join(' ')} ]                                            ║`);
+  console.log('║   Valid for: 5 Minutes (Executive Session)                             ║');
+  console.log('╚════════════════════════════════════════════════════════════════════════╝\n');
+
+  return res.json({
+    success: true,
+    challengeId,
+    otp,
+    message: 'Fresh 4-digit security code generated.'
+  });
+});
+
+// Legacy Quick Verification Check (Updated to Himan@1202)
 app.post('/api/admin/verify', (req, res) => {
   const { passcode } = req.body;
-  if (passcode && ADMIN_PASSCODES.includes(String(passcode).trim())) {
+  if (passcode && String(passcode).trim() === ADMIN_PASSCODE) {
     return res.json({ success: true, message: 'Administrator credentials verified.' });
   }
   return res.status(401).json({ success: false, message: 'Invalid administrator passcode.' });

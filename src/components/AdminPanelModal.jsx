@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   X, PlusCircle, Trash2, ShieldCheck, Building, RotateCcw,
-  AlertTriangle, Lock, Eye, EyeOff, LogOut, KeyRound,
+  AlertTriangle, Eye, EyeOff, LogOut, KeyRound,
   Users, Phone, Mail, Calendar, Database,
   Clock, Search, RefreshCw,
-  ChevronDown, ChevronUp, Check, MessageCircle, Sparkles
+  ChevronDown, ChevronUp, Check, MessageCircle, Sparkles,
+  ArrowRight, ArrowLeft, Fingerprint, Shield
 } from 'lucide-react';
 import { PRESET_IMAGES } from '../data/initialProperties';
 import {
@@ -14,9 +15,15 @@ import {
   deleteEnquiry,
   testMongoConnection
 } from '../services/enquiryService';
+import {
+  requestAdminStep1,
+  verifyAdminOtp,
+  resendAdminOtp
+} from '../services/propertyService';
 
-const ADMIN_PASSCODES = ['admin123', 'fnb2026'];
+const ADMIN_PASSCODE = 'Himan@1202';
 const SESSION_AUTH_KEY = 'fnb_admin_authenticated_session';
+const SESSION_TOKEN_KEY = 'fnb_admin_session_token';
 
 export default function AdminPanelModal({
   isOpen,
@@ -36,9 +43,22 @@ export default function AdminPanelModal({
     }
   });
 
+  // 2-Step Authentication State: Step 1 = Passcode, Step 2 = 4-digit OTP
+  const [authStep, setAuthStep] = useState(1);
   const [passcode, setPasscode] = useState('');
   const [showPasscode, setShowPasscode] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [isVerifyingStep1, setIsVerifyingStep1] = useState(false);
+
+  // Step 2 OTP State
+  const [challengeId, setChallengeId] = useState('');
+  const [sessionOtp, setSessionOtp] = useState('');
+  const [otpDigits, setOtpDigits] = useState(['', '', '', '']);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [isResendingOtp, setIsResendingOtp] = useState(false);
+  const [otpCountdown, setOtpCountdown] = useState(300); // 5 minutes
+
+  const otpInputRefs = [useRef(null), useRef(null), useRef(null), useRef(null)];
 
   // Tab Selection: 'inventory' | 'leads' | 'add'
   const [activeTab, setActiveTab] = useState('inventory');
@@ -82,6 +102,101 @@ export default function AdminPanelModal({
 
   const [formErrors, setFormErrors] = useState({});
 
+  // Countdown timer for Step 2 OTP
+  useEffect(() => {
+    let timer = null;
+    if (authStep === 2 && otpCountdown > 0) {
+      timer = setInterval(() => {
+        setOtpCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [authStep, otpCountdown]);
+
+  // --------------------------------------------------------------------------
+  // 1. BACKGROUND SCROLL LOCK (BODY OVERFLOW FIX)
+  // Locks the background landing page completely while the admin modal is open
+  // --------------------------------------------------------------------------
+  useEffect(() => {
+    if (!isOpen) return;
+
+    // Cache original overflow & padding-right to avoid layout shift when scrollbar is hidden
+    const prevOverflow = document.body.style.overflow;
+    const prevPaddingRight = document.body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+
+    document.body.style.overflow = 'hidden';
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    return () => {
+      document.body.style.overflow = prevOverflow || '';
+      document.body.style.paddingRight = prevPaddingRight || '';
+    };
+  }, [isOpen]);
+
+  // --------------------------------------------------------------------------
+  // 2. LOGOUT & 5-MINUTE INACTIVITY AUTO-TIMEOUT
+  // --------------------------------------------------------------------------
+  const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // Strictly 5 minutes (300,000 ms)
+
+  const handleLogout = useCallback(() => {
+    setIsAuthenticated(false);
+    setAuthStep(1);
+    setPasscode('');
+    setSessionOtp('');
+    setChallengeId('');
+    setOtpDigits(['', '', '', '']);
+    setAuthError('');
+    try {
+      sessionStorage.removeItem(SESSION_AUTH_KEY);
+      sessionStorage.removeItem('fnb_admin_passcode');
+      sessionStorage.removeItem(SESSION_TOKEN_KEY);
+    } catch (err) {
+      console.error(err);
+    }
+    if (showToast) {
+      showToast('Admin console locked securely.', 'info');
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isOpen) return;
+
+    let timeoutTimer = null;
+
+    const performAutoLogout = () => {
+      handleLogout();
+      if (showToast) {
+        showToast('Admin session expired due to 5 minutes of inactivity.', 'warning');
+      }
+    };
+
+    const resetInactivityTimer = () => {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      timeoutTimer = setTimeout(performAutoLogout, INACTIVITY_TIMEOUT_MS);
+    };
+
+    // Initialize timer immediately upon session start
+    resetInactivityTimer();
+
+    // Listen to user interactions to reset timer
+    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+    activityEvents.forEach((evt) => {
+      window.addEventListener(evt, resetInactivityTimer, { passive: true });
+    });
+
+    return () => {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      activityEvents.forEach((evt) => {
+        window.removeEventListener(evt, resetInactivityTimer);
+      });
+    };
+  }, [isAuthenticated, isOpen, handleLogout, showToast]);
+
   // Refresh leads and database connection status on demand
   const loadLeadsAndStatus = useCallback(async () => {
     setLoadingLeads(true);
@@ -120,64 +235,180 @@ export default function AdminPanelModal({
 
   if (!isOpen) return null;
 
-  // Handle Login Authentication
-  const handleLogin = (e) => {
+  // --------------------------------------------------------------------------
+  // STEP 1: Verify Exact Passcode (Himan@1202)
+  // --------------------------------------------------------------------------
+  const handleStep1Submit = async (e) => {
     e.preventDefault();
     const entered = passcode.trim();
-    if (ADMIN_PASSCODES.includes(entered)) {
-      setIsAuthenticated(true);
-      setAuthError('');
-      try {
-        sessionStorage.setItem(SESSION_AUTH_KEY, 'active');
-        sessionStorage.setItem('fnb_admin_passcode', entered);
-      } catch (err) {
-        console.error(err);
+
+    if (!entered) {
+      setAuthError('Please enter your administrator passcode.');
+      return;
+    }
+
+    setIsVerifyingStep1(true);
+    setAuthError('');
+
+    try {
+      const res = await requestAdminStep1(entered);
+      if (res.success && res.step === 2) {
+        setChallengeId(res.challengeId);
+        setSessionOtp(res.otp || '');
+        setAuthStep(2);
+        setOtpDigits(['', '', '', '']);
+        setOtpCountdown(res.expiresInSeconds || 300);
+        setAuthError('');
+        if (showToast) {
+          showToast('Step 1 approved. Enter the 4-digit security code to proceed.');
+        }
+        setTimeout(() => {
+          if (otpInputRefs[0].current) {
+            otpInputRefs[0].current.focus();
+          }
+        }, 100);
+      } else {
+        setAuthError(res.error || 'Invalid administrator passcode. Access strictly restricted.');
       }
-      if (showToast) {
-        showToast('Administrative access granted. Welcome to Portfolio & Leads Management.');
-      }
-      loadLeadsAndStatus();
-    } else {
-      setAuthError('Invalid administrator passcode. Please try again.');
+    } catch (err) {
+      setAuthError(err.message || 'Invalid administrator passcode. Access strictly restricted.');
+    } finally {
+      setIsVerifyingStep1(false);
     }
   };
 
-  const handleQuickDemoUnlock = () => {
-    setPasscode('admin123');
-    setIsAuthenticated(true);
+  // --------------------------------------------------------------------------
+  // STEP 2: Handle 4-Digit OTP Input Navigation & Autofill
+  // --------------------------------------------------------------------------
+  const handleOtpDigitChange = (index, value) => {
+    // Only accept numeric digit
+    const cleaned = value.replace(/\D/g, '');
+    const newDigits = [...otpDigits];
+
+    if (cleaned.length === 0) {
+      newDigits[index] = '';
+      setOtpDigits(newDigits);
+      return;
+    }
+
+    // Single digit input
+    if (cleaned.length === 1) {
+      newDigits[index] = cleaned;
+      setOtpDigits(newDigits);
+      if (index < 3 && otpInputRefs[index + 1].current) {
+        otpInputRefs[index + 1].current.focus();
+      }
+    } else {
+      // Pasted multiple digits
+      const digitsArr = cleaned.slice(0, 4).split('');
+      digitsArr.forEach((d, i) => {
+        if (i < 4) newDigits[i] = d;
+      });
+      setOtpDigits(newDigits);
+      const nextFocus = Math.min(digitsArr.length, 3);
+      if (otpInputRefs[nextFocus].current) {
+        otpInputRefs[nextFocus].current.focus();
+      }
+    }
+  };
+
+  const handleOtpKeyDown = (index, e) => {
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
+      if (otpInputRefs[index - 1].current) {
+        otpInputRefs[index - 1].current.focus();
+      }
+    }
+  };
+
+  const handleOtpPaste = (e) => {
+    e.preventDefault();
+    const pasteData = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4);
+    if (pasteData) {
+      const newDigits = ['', '', '', ''];
+      pasteData.split('').forEach((char, i) => {
+        if (i < 4) newDigits[i] = char;
+      });
+      setOtpDigits(newDigits);
+      const targetFocus = Math.min(pasteData.length, 3);
+      if (otpInputRefs[targetFocus].current) {
+        otpInputRefs[targetFocus].current.focus();
+      }
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // STEP 2: Verify 4-Digit OTP
+  // --------------------------------------------------------------------------
+  const handleStep2Submit = async (e) => {
+    e.preventDefault();
+    const enteredOtp = otpDigits.join('');
+
+    if (enteredOtp.length !== 4) {
+      setAuthError('Please enter the complete 4-digit verification code.');
+      return;
+    }
+
+    setIsVerifyingOtp(true);
+    setAuthError('');
+
+    try {
+      const res = await verifyAdminOtp(challengeId, enteredOtp, sessionOtp);
+      if (res.success) {
+        setIsAuthenticated(true);
+        setAuthError('');
+        try {
+          sessionStorage.setItem(SESSION_AUTH_KEY, 'active');
+          sessionStorage.setItem('fnb_admin_passcode', ADMIN_PASSCODE);
+          if (res.sessionToken) {
+            sessionStorage.setItem(SESSION_TOKEN_KEY, res.sessionToken);
+          }
+        } catch (err) {
+          console.error(err);
+        }
+        if (showToast) {
+          showToast('Administrative 2-step verification successful. Access granted.');
+        }
+        loadLeadsAndStatus();
+      } else {
+        setAuthError(res.error || 'Invalid 4-digit code. Please check and try again.');
+      }
+    } catch (err) {
+      setAuthError(err.message || 'Invalid 4-digit code. Please check and try again.');
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
+
+  // Resend 4-Digit OTP
+  const handleResendOtp = async () => {
+    if (isResendingOtp || !challengeId) return;
+    setIsResendingOtp(true);
     setAuthError('');
     try {
-      sessionStorage.setItem(SESSION_AUTH_KEY, 'active');
-      sessionStorage.setItem('fnb_admin_passcode', 'admin123');
+      const res = await resendAdminOtp(challengeId);
+      if (res.success) {
+        if (res.otp) setSessionOtp(res.otp);
+        setOtpCountdown(300);
+        setOtpDigits(['', '', '', '']);
+        if (showToast) {
+          showToast('A fresh 4-digit security code has been generated.');
+        }
+        if (otpInputRefs[0].current) {
+          otpInputRefs[0].current.focus();
+        }
+      }
     } catch (err) {
-      console.error(err);
-    }
-    if (showToast) {
-      showToast('Administrative access verified (Demo session active).');
-    }
-    loadLeadsAndStatus();
-  };
-
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setPasscode('');
-    try {
-      sessionStorage.removeItem(SESSION_AUTH_KEY);
-      sessionStorage.removeItem('fnb_admin_passcode');
-    } catch (err) {
-      console.error(err);
-    }
-    if (showToast) {
-      showToast('Admin console locked successfully.', 'info');
+      setAuthError(err.message || 'Failed to generate new security code.');
+    } finally {
+      setIsResendingOtp(false);
     }
   };
 
-  const currentPasscode = passcode || sessionStorage.getItem('fnb_admin_passcode') || 'admin123';
+  const currentPasscode = ADMIN_PASSCODE;
 
   // Status Change Handler for Leads
   const handleStatusChange = async (leadId, newStatus) => {
     setUpdatingLeadId(leadId);
-    // Optimistic update
     setEnquiries((prev) =>
       prev.map((item) => (item._id === leadId ? { ...item, status: newStatus } : item))
     );
@@ -231,7 +462,7 @@ export default function AdminPanelModal({
     }
   };
 
-  // Form Handlers
+  // Form Handlers for Add Property
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
     setFormData((prev) => ({
@@ -360,123 +591,304 @@ export default function AdminPanelModal({
 
   const newLeadsCount = enquiries.filter((l) => l.status === 'New').length;
 
+  const formatTimer = (seconds) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fade-in text-left">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in text-left">
       <div className="relative bg-white rounded-3xl max-w-5xl w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-amber-100 flex flex-col">
         
-        {/* UNAUTHENTICATED LOGIN SCREEN */}
+        {/* ================================================================== */}
+        {/* UNAUTHENTICATED STRICT 2-STEP LOGIN GATEWAY                        */}
+        {/* ================================================================== */}
         {!isAuthenticated ? (
-          <div className="p-8 sm:p-12 max-w-md mx-auto w-full text-center space-y-6">
-            <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-100 text-amber-600 flex items-center justify-center mx-auto shadow-sm">
-              <Lock className="w-8 h-8" />
+          <div className="p-6 sm:p-10 max-w-md mx-auto w-full text-center space-y-6">
+            
+            {/* Top Emblem & Branding */}
+            <div className="space-y-3">
+              <div className="relative mx-auto w-16 h-16 rounded-2xl bg-slate-900 border border-amber-500/30 text-amber-400 flex items-center justify-center shadow-lg">
+                <Shield className="w-8 h-8 text-amber-500" />
+                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center text-[10px] font-bold">
+                  2FA
+                </div>
+              </div>
+
+              <div>
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-amber-400 text-[10px] font-bold uppercase tracking-wider mb-2">
+                  <Fingerprint className="w-3.5 h-3.5" />
+                  <span>Institutional Gateway</span>
+                </span>
+                <h3 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+                  Flats-n-Beyond Command Console
+                </h3>
+                <p className="text-xs text-slate-500 leading-relaxed mt-1">
+                  Strict multi-step authorization required for portfolio inventory control and private customer leads.
+                </p>
+              </div>
             </div>
 
-            <div className="space-y-1.5">
-              <h3 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-                Admin Authentication
-              </h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Restricted portal for authorized management of property listings & customer enquiries on Flats-n-Beyond.
-              </p>
+            {/* Step Progress Tracker */}
+            <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-100 rounded-xl text-xs font-semibold">
+              <div className={`py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                authStep === 1
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 bg-white/70'
+              }`}>
+                <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 text-[10px] font-extrabold flex items-center justify-center shrink-0">
+                  {authStep === 2 ? '✓' : '1'}
+                </span>
+                <span>Passcode</span>
+              </div>
+
+              <div className={`py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                authStep === 2
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-400'
+              }`}>
+                <span className={`w-4 h-4 rounded-full text-[10px] font-extrabold flex items-center justify-center shrink-0 ${
+                  authStep === 2 ? 'bg-amber-500 text-slate-950' : 'bg-slate-300 text-slate-600'
+                }`}>
+                  2
+                </span>
+                <span>Security Code</span>
+              </div>
             </div>
 
-            <form onSubmit={handleLogin} className="space-y-4 text-left">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
-                  Administrator Passcode
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPasscode ? 'text' : 'password'}
-                    value={passcode}
-                    onChange={(e) => {
-                      setPasscode(e.target.value);
-                      setAuthError('');
-                    }}
-                    placeholder="Enter admin passcode"
-                    className="w-full px-4 py-3 bg-amber-50/40 border border-amber-100 rounded-xl text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 focus:bg-white"
-                    autoFocus
-                  />
+            {/* Error Message Box */}
+            {authError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold text-rose-700 animate-fade-in flex items-start gap-2 text-left">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>{authError}</span>
+              </div>
+            )}
+
+            {/* ============================================================== */}
+            {/* STEP 1: EXACT PASSCODE ENTRY (Himan@1202)                       */}
+            {/* ============================================================== */}
+            {authStep === 1 && (
+              <form onSubmit={handleStep1Submit} autoComplete="off" className="space-y-4 text-left">
+                <div className="space-y-1.5">
+                  <label htmlFor="fnb_admin_passcode" className="text-xs font-bold uppercase tracking-wider text-slate-900 block">
+                    Administrator Security Passcode
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="fnb_admin_passcode"
+                      name="fnb_admin_passcode"
+                      type={showPasscode ? 'text' : 'password'}
+                      value={passcode}
+                      onChange={(e) => {
+                        setPasscode(e.target.value);
+                        setAuthError('');
+                      }}
+                      placeholder="Enter administrator passcode"
+                      autoComplete="new-password"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck="false"
+                      data-form-type="other"
+                      data-lpignore="true"
+                      className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-300 rounded-xl text-sm font-semibold text-slate-950 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 focus:bg-white transition-all placeholder:text-slate-400"
+                      autoFocus
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPasscode(!showPasscode)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer p-1"
+                      aria-label={showPasscode ? 'Hide passcode' : 'Show passcode'}
+                    >
+                      {showPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isVerifyingStep1}
+                  className="w-full py-3.5 bg-slate-950 hover:bg-slate-800 disabled:opacity-60 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
+                >
+                  {isVerifyingStep1 ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 text-amber-400 animate-spin" />
+                      <span>Validating Credentials...</span>
+                    </>
+                  ) : (
+                    <>
+                      <KeyRound className="w-4 h-4 text-amber-400" />
+                      <span>Proceed to 2FA Verification</span>
+                      <ArrowRight className="w-4 h-4 text-slate-400" />
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+
+            {/* ============================================================== */}
+            {/* STEP 2: 4-DIGIT ONE-TIME PASSCODE (OTP) VERIFICATION           */}
+            {/* ============================================================== */}
+            {authStep === 2 && (
+              <form onSubmit={handleStep2Submit} autoComplete="off" className="space-y-5 text-left animate-fade-in">
+                
+                {/* Session Security Code Notification */}
+                <div className="p-4 bg-amber-50/90 border border-amber-300 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-amber-600" />
+                      <span>Session Security Code</span>
+                    </span>
+                    <span className="text-[11px] font-mono font-bold text-amber-950 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-200">
+                      ⏱ {formatTimer(otpCountdown)}
+                    </span>
+                  </div>
+
+                  {sessionOtp && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-xs font-semibold text-slate-700">Verification Code:</span>
+                      <strong className="font-mono text-slate-950 font-black text-sm tracking-widest bg-white px-3 py-1 rounded-lg border-2 border-amber-300 shadow-2xs">
+                        {sessionOtp}
+                      </strong>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2 text-center">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-800 block text-left">
+                    Enter 4-Digit Security Code
+                  </label>
+
+                  {/* 4 Separate PIN Input Boxes - No Browser Autofill */}
+                  <div className="flex items-center justify-between gap-3 pt-1" onPaste={handleOtpPaste}>
+                    {otpDigits.map((digit, idx) => (
+                      <input
+                        key={idx}
+                        ref={otpInputRefs[idx]}
+                        type="text"
+                        name={`fnb_admin_otp_${idx}`}
+                        id={`fnb_admin_otp_${idx}`}
+                        inputMode="numeric"
+                        maxLength={1}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck="false"
+                        data-form-type="other"
+                        data-lpignore="true"
+                        value={digit}
+                        onChange={(e) => handleOtpDigitChange(idx, e.target.value)}
+                        onKeyDown={(e) => handleOtpKeyDown(idx, e)}
+                        className={`w-14 h-14 text-center text-2xl font-mono font-black rounded-xl border-2 transition-all focus:outline-none ${
+                          digit
+                            ? 'border-amber-500 bg-white ring-2 ring-amber-500/20 text-slate-950'
+                            : 'border-slate-300 bg-slate-50 focus:border-amber-500 focus:bg-white text-slate-950'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Resend and Step 1 Back Navigation */}
+                <div className="flex items-center justify-between text-xs pt-1">
                   <button
                     type="button"
-                    onClick={() => setShowPasscode(!showPasscode)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    onClick={() => {
+                      setAuthStep(1);
+                      setAuthError('');
+                    }}
+                    className="text-slate-600 hover:text-slate-950 font-bold inline-flex items-center gap-1 cursor-pointer transition-colors"
                   >
-                    {showPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Change Passcode</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleResendOtp}
+                    disabled={isResendingOtp || otpCountdown > 270}
+                    className="text-amber-800 hover:text-amber-950 disabled:opacity-40 font-bold inline-flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isResendingOtp ? 'animate-spin' : ''}`} />
+                    <span>Resend Code</span>
                   </button>
                 </div>
-                {authError && (
-                  <p className="text-[11px] font-semibold text-rose-600 mt-1">{authError}</p>
-                )}
-              </div>
 
-              <button
-                type="submit"
-                className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
-              >
-                <KeyRound className="w-4 h-4 text-amber-400" />
-                <span>Verify & Unlock Portal</span>
-              </button>
-
-              {/* Quick Demo Credential Helper */}
-              <div className="pt-2 text-center">
                 <button
-                  type="button"
-                  onClick={handleQuickDemoUnlock}
-                  className="text-[11px] font-semibold text-slate-700 hover:text-amber-700 bg-amber-50/70 hover:bg-amber-100/70 px-3 py-1.5 rounded-lg border border-amber-100 transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                  type="submit"
+                  disabled={isVerifyingOtp || otpDigits.join('').length !== 4}
+                  className="w-full py-3.5 bg-slate-950 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
                 >
-                  <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Click to Demo Unlock (Passcode: admin123)</span>
+                  {isVerifyingOtp ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 text-amber-400 animate-spin" />
+                      <span>Verifying Security Code...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4 text-amber-400" />
+                      <span>Authenticate & Open Dashboard</span>
+                    </>
+                  )}
                 </button>
-              </div>
-            </form>
+              </form>
+            )}
 
-            <div className="pt-4 border-t border-amber-100/60">
+            {/* Cancel Button */}
+            <div className="pt-2 border-t border-slate-100">
               <button
                 type="button"
                 onClick={onClose}
-                className="text-xs font-semibold text-slate-500 hover:text-slate-900 cursor-pointer"
+                className="text-xs font-semibold text-slate-500 hover:text-slate-900 cursor-pointer transition-colors"
               >
                 Return to Website
               </button>
             </div>
           </div>
         ) : (
-          /* AUTHENTICATED MANAGEMENT PORTAL */
+          /* ============================================================== */
+          /* AUTHENTICATED MANAGEMENT PORTAL - HIGH CONTRAST UPGRADE        */
+          /* ============================================================== */
           <>
-            {/* Header */}
-            <div className="px-6 py-5 border-b border-slate-850 flex items-center justify-between bg-slate-950 text-white rounded-t-3xl">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-800 text-amber-400 flex items-center justify-center">
-                  <ShieldCheck className="w-5 h-5" />
+            {/* Header: High-Contrast Obsidian Theme with Gold & Rose Accents */}
+            <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between bg-slate-950 text-white rounded-t-3xl">
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-xl bg-slate-900 border border-amber-500/30 text-amber-400 flex items-center justify-center shadow-md">
+                  <ShieldCheck className="w-6 h-6 text-amber-400" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-lg font-bold tracking-tight">Flats-n-Beyond Command Console</h2>
-                    <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-slate-800">
-                      Authenticated Session
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h2 className="text-lg font-extrabold tracking-tight text-white">Flats-n-Beyond Command Console</h2>
+                    <span className="text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-amber-500/40 flex items-center gap-1.5 shadow-xs">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      2FA Active Session
+                    </span>
+                    <span className="text-[10px] font-semibold text-slate-300 bg-slate-900/90 border border-slate-800 px-2.5 py-0.5 rounded-full hidden sm:inline-flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-amber-400" />
+                      5m Inactivity Auto-Lock
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400">
-                    Manage portfolio inventory and review live customer enquiries synced with MongoDB Atlas.
+                  <p className="text-xs text-slate-300 mt-1 font-medium">
+                    Live portfolio inventory management and customer lead pipeline synced directly with MongoDB Atlas.
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5">
                 {/* Logout / Lock button */}
                 <button
                   onClick={handleLogout}
-                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 transition-colors cursor-pointer border border-slate-800"
+                  className="flex items-center gap-2 text-xs font-bold px-3.5 py-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/70 text-rose-200 transition-all cursor-pointer border border-rose-800/60 shadow-xs"
                   title="Lock and Log Out"
                 >
-                  <LogOut className="w-3.5 h-3.5 text-amber-400" />
+                  <LogOut className="w-3.5 h-3.5 text-rose-300" />
                   <span className="hidden sm:inline">Lock Portal</span>
                 </button>
 
                 <button
                   onClick={onClose}
-                  className="w-9 h-9 rounded-full bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+                  className="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white flex items-center justify-center transition-colors cursor-pointer border border-slate-700"
                   aria-label="Close admin modal"
                 >
                   <X className="w-5 h-5" />
@@ -484,35 +896,35 @@ export default function AdminPanelModal({
               </div>
             </div>
 
-            {/* Tab Navigation Controls Bar */}
-            <div className="px-6 py-3 bg-amber-50/50 border-b border-amber-100 flex items-center justify-between flex-wrap gap-3">
-              <div className="flex items-center gap-2">
+            {/* High-Contrast Segmented Tab Navigation Controls Bar */}
+            <div className="px-6 py-3.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 {/* Tab 1: Live Inventory */}
                 <button
                   onClick={() => setActiveTab('inventory')}
-                  className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  className={`px-4 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-2 shadow-xs ${
                     activeTab === 'inventory'
-                      ? 'bg-slate-900 text-white shadow-xs'
-                      : 'bg-white hover:bg-amber-50 text-slate-700 border border-amber-100'
+                      ? 'bg-slate-950 text-white border border-slate-900 ring-2 ring-slate-900/10'
+                      : 'bg-white hover:bg-slate-200 text-slate-900 border border-slate-300'
                   }`}
                 >
-                  <Building className="w-3.5 h-3.5" />
+                  <Building className="w-4 h-4 text-amber-500" />
                   <span>Live Inventory ({properties.length})</span>
                 </button>
 
                 {/* Tab 2: Customer Enquiries / Leads */}
                 <button
                   onClick={() => setActiveTab('leads')}
-                  className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 relative ${
+                  className={`px-4 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-2 relative shadow-xs ${
                     activeTab === 'leads'
-                      ? 'bg-slate-900 text-white shadow-xs'
-                      : 'bg-white hover:bg-amber-50 text-slate-700 border border-amber-100'
+                      ? 'bg-slate-950 text-white border border-slate-900 ring-2 ring-slate-900/10'
+                      : 'bg-white hover:bg-slate-200 text-slate-900 border border-slate-300'
                   }`}
                 >
-                  <Users className="w-3.5 h-3.5 text-amber-500" />
+                  <Users className="w-4 h-4 text-amber-500" />
                   <span>Customer Enquiries ({enquiries.length})</span>
                   {newLeadsCount > 0 && (
-                    <span className="px-1.5 py-0.2 bg-amber-500 text-white text-[10px] font-bold rounded-full animate-pulse">
+                    <span className="px-2 py-0.5 bg-amber-500 text-slate-950 text-[10px] font-black rounded-full shadow-xs">
                       {newLeadsCount} New
                     </span>
                   )}
@@ -521,13 +933,13 @@ export default function AdminPanelModal({
                 {/* Tab 3: Add New Property */}
                 <button
                   onClick={() => setActiveTab('add')}
-                  className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  className={`px-4 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-2 shadow-xs ${
                     activeTab === 'add'
-                      ? 'bg-amber-600 text-white shadow-xs'
-                      : 'bg-white hover:bg-amber-50 text-slate-700 border border-amber-100'
+                      ? 'bg-amber-600 text-white border border-amber-700 ring-2 ring-amber-600/20'
+                      : 'bg-white hover:bg-amber-50 text-amber-950 border border-amber-300'
                   }`}
                 >
-                  <PlusCircle className="w-3.5 h-3.5 text-amber-600" />
+                  <PlusCircle className="w-4 h-4 text-amber-600" />
                   <span>Add New Property</span>
                 </button>
               </div>
@@ -536,14 +948,14 @@ export default function AdminPanelModal({
               {activeTab === 'inventory' && (
                 <button
                   onClick={() => {
-                    if (window.confirm('Restore initial curated listings? Any newly added mock properties will be reset.')) {
+                    if (window.confirm('Restore initial curated listings in MongoDB Atlas? Any newly added mock properties will be reset.')) {
                       onResetToDefault(currentPasscode);
                     }
                   }}
-                  className="text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1.5 py-1.5 px-3 rounded-lg hover:bg-amber-100/60 transition-colors cursor-pointer border border-transparent hover:border-amber-200"
+                  className="text-xs font-bold text-slate-800 hover:text-slate-950 flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-white hover:bg-slate-200 border border-slate-300 shadow-xs transition-colors cursor-pointer"
                   title="Reset to default curated inventory"
                 >
-                  <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                  <RotateCcw className="w-3.5 h-3.5 text-slate-600" />
                   <span>Reset Catalog</span>
                 </button>
               )}
@@ -552,6 +964,14 @@ export default function AdminPanelModal({
                 <button
                   onClick={loadLeadsAndStatus}
                   disabled={loadingLeads}
+                  className="text-xs font-bold text-slate-800 hover:text-slate-950 flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-white hover:bg-slate-200 border border-slate-300 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                  title="Refresh leads and database connection"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-amber-600 ${loadingLeads ? 'animate-spin' : ''}`} />
+                  <span>Refresh Leads</span>
+                </button>
+              )}
+            </div>
                   className="text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1.5 py-1.5 px-3 rounded-lg hover:bg-amber-100/60 transition-colors cursor-pointer border border-transparent hover:border-amber-200"
                   title="Refresh leads and database connection"
                 >
@@ -567,64 +987,64 @@ export default function AdminPanelModal({
               {/* TAB 1: LIVE INVENTORY TABLE & REMOVE */}
               {activeTab === 'inventory' && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between pb-1 border-b border-slate-200">
                     <div>
-                      <h3 className="text-base font-bold text-slate-900">Current Active Listings</h3>
-                      <p className="text-xs text-slate-500">
-                        Changes take effect immediately on the visitor catalog and search filters.
+                      <h3 className="text-base font-extrabold text-slate-950">Current Active Listings</h3>
+                      <p className="text-xs font-medium text-slate-600">
+                        Changes take effect immediately on the visitor catalog and MongoDB Atlas database.
                       </p>
                     </div>
                     <button
                       onClick={() => setActiveTab('add')}
-                      className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      className="px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-2 shadow-xs transition-colors cursor-pointer"
                     >
-                      <PlusCircle className="w-3.5 h-3.5 text-amber-400" />
+                      <PlusCircle className="w-4 h-4 text-amber-400" />
                       <span>New Listing</span>
                     </button>
                   </div>
 
                   {properties.length === 0 ? (
-                    <div className="py-12 text-center bg-amber-50/30 rounded-2xl border border-dashed border-amber-200">
-                      <p className="text-sm font-semibold text-slate-600">No properties in inventory</p>
-                      <p className="text-xs text-slate-400 mt-1 mb-4">Click below to add a property or restore sample data.</p>
+                    <div className="py-12 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-300">
+                      <p className="text-sm font-extrabold text-slate-800">No properties in inventory</p>
+                      <p className="text-xs text-slate-500 mt-1 mb-4 font-medium">Click below to add a property or restore sample data.</p>
                       <button
-                        onClick={onResetToDefault}
-                        className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-semibold cursor-pointer"
+                        onClick={() => onResetToDefault(currentPasscode)}
+                        className="px-4 py-2 bg-slate-950 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer shadow-xs transition-colors"
                       >
                         Restore Sample Listings
                       </button>
                     </div>
                   ) : (
-                    <div className="divide-y divide-amber-100/80 border border-amber-100 rounded-2xl overflow-hidden bg-white shadow-2xs">
+                    <div className="divide-y divide-slate-200 border-2 border-slate-200 rounded-2xl overflow-hidden bg-white shadow-xs">
                       {properties.map((item) => (
                         <div
                           key={item.id}
-                          className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-amber-50/40 transition-colors"
+                          className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 transition-colors"
                         >
                           {/* Left: Thumbnail & Details */}
                           <div className="flex items-center gap-4 min-w-0">
                             <img
                               src={item.image}
                               alt={item.title}
-                              className="w-16 h-14 rounded-xl object-cover shrink-0 bg-slate-100 border border-amber-100"
+                              className="w-16 h-14 rounded-xl object-cover shrink-0 bg-slate-100 border-2 border-slate-200 shadow-2xs"
                             />
                             <div className="min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-xs font-bold text-slate-900 truncate">
+                                <span className="text-sm font-extrabold text-slate-950 truncate">
                                   {item.title}
                                 </span>
-                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-slate-700 border border-amber-100">
+                                <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-900 border border-slate-300">
                                   {item.configuration}
                                 </span>
-                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-800 border border-slate-200">
+                                <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-amber-50 text-amber-900 border border-amber-300">
                                   {item.serviceType}
                                 </span>
                               </div>
-                              <p className="text-xs text-slate-500 mt-0.5 truncate">
+                              <p className="text-xs font-semibold text-slate-600 mt-1 truncate">
                                 📍 {item.subLocality || item.location} | RERA: {item.rera || 'Verified'}
                               </p>
-                              <p className="text-xs font-bold text-amber-700 mt-0.5">
-                                {item.price} <span className="text-slate-400 font-normal">({item.areaSqft} sq.ft)</span>
+                              <p className="text-sm font-black text-amber-800 mt-1">
+                                {item.price} <span className="text-slate-600 font-semibold text-xs">({item.areaSqft} sq.ft)</span>
                               </p>
                             </div>
                           </div>
@@ -632,19 +1052,19 @@ export default function AdminPanelModal({
                           {/* Right: Actions */}
                           <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
                             {deleteConfirmId === item.id ? (
-                              <div className="flex items-center gap-2 p-1.5 rounded-xl bg-amber-50 border border-amber-200 animate-fade-in">
-                                <span className="text-[11px] font-semibold text-slate-800 flex items-center gap-1">
-                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> Confirm delete?
+                              <div className="flex items-center gap-2 p-1.5 rounded-xl bg-rose-50 border border-rose-300 animate-fade-in">
+                                <span className="text-[11px] font-bold text-rose-950 flex items-center gap-1">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600" /> Confirm delete?
                                 </span>
                                 <button
-                                  onClick={() => handleDelete(item.id, item.title)}
-                                  className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
+                                  onClick={() => handleDelete(item.id)}
+                                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors shadow-2xs"
                                 >
                                   Yes, Delete
                                 </button>
                                 <button
                                   onClick={() => setDeleteConfirmId(null)}
-                                  className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-lg cursor-pointer"
+                                  className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-lg cursor-pointer"
                                 >
                                   Cancel
                                 </button>
@@ -652,8 +1072,8 @@ export default function AdminPanelModal({
                             ) : (
                               <button
                                 onClick={() => setDeleteConfirmId(item.id)}
-                                className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition-colors cursor-pointer"
-                                title="Remove listing from live view"
+                                className="p-2.5 rounded-xl text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-300 hover:border-rose-300 transition-colors cursor-pointer"
+                                title="Remove listing from live view and database"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -670,37 +1090,37 @@ export default function AdminPanelModal({
               {activeTab === 'leads' && (
                 <div className="space-y-6 animate-fade-in">
                   
-                  {/* MongoDB Atlas Integration Status Banner */}
-                  <div className={`p-4 sm:p-5 rounded-2xl border transition-all ${
+                  {/* MongoDB Atlas Integration Status Banner - High Contrast Theme */}
+                  <div className={`p-4 sm:p-5 rounded-2xl border-2 transition-all ${
                     dbStatus?.connected
-                      ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
-                      : 'bg-amber-50/80 border-amber-200 text-amber-950'
+                      ? 'bg-emerald-950 text-white border-emerald-700 shadow-sm'
+                      : 'bg-amber-950 text-white border-amber-700 shadow-sm'
                   }`}>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="flex items-start gap-3">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
                           dbStatus?.connected
-                            ? 'bg-emerald-100 border-emerald-300 text-emerald-700'
-                            : 'bg-amber-100 border-amber-300 text-amber-700'
+                            ? 'bg-emerald-900 border-emerald-600 text-emerald-300 shadow-inner'
+                            : 'bg-amber-900 border-amber-600 text-amber-300 shadow-inner'
                         }`}>
                           <Database className="w-5 h-5" />
                         </div>
                         <div>
                           <div className="flex items-center gap-2 flex-wrap">
-                            <h4 className="text-sm font-bold text-slate-900">
+                            <h4 className="text-sm font-extrabold text-white">
                               {dbStatus?.connected
                                 ? `MongoDB Atlas: Connected (${dbStatus.dbName || 'flats_n_beyond'})`
                                 : 'MongoDB Atlas Ready (Active Fallback Storage)'}
                             </h4>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                            <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
                               dbStatus?.connected
-                                ? 'bg-emerald-200/70 text-emerald-900'
-                                : 'bg-amber-200/70 text-amber-900'
+                                ? 'bg-emerald-400 text-slate-950'
+                                : 'bg-amber-400 text-slate-950'
                             }`}>
                               {dbStatus?.connected ? 'Cloud Atlas Synced' : 'Awaiting Personal URI'}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                          <p className="text-xs text-slate-200 mt-1 leading-relaxed font-medium">
                             {dbStatus?.connected
                               ? `All customer leads and tour requests are streaming in real-time to your MongoDB Atlas collection: "enquiries".`
                               : `The backend is saving leads into resilient storage. Connect your personal MongoDB Atlas database to persist leads in your cloud cluster.`}
@@ -710,9 +1130,9 @@ export default function AdminPanelModal({
 
                       <button
                         onClick={() => setShowMongoInstructions(!showMongoInstructions)}
-                        className="self-start sm:self-center px-3.5 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-amber-200 text-xs font-semibold text-slate-800 transition-colors flex items-center gap-1.5 shrink-0 shadow-2xs cursor-pointer"
+                        className="self-start sm:self-center px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-white transition-colors flex items-center gap-1.5 shrink-0 shadow-sm cursor-pointer"
                       >
-                        <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                         <span>{showMongoInstructions ? 'Hide Setup Guide' : 'MongoDB Atlas Connection Setup'}</span>
                         {showMongoInstructions ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       </button>
@@ -720,36 +1140,36 @@ export default function AdminPanelModal({
 
                     {/* Collapsible Atlas Setup Instructions */}
                     {showMongoInstructions && (
-                      <div className="mt-4 pt-4 border-t border-amber-200/80 space-y-4 text-xs text-slate-700 animate-fade-in">
-                        <div className="bg-white p-4 rounded-xl border border-amber-100 space-y-2">
-                          <p className="font-bold text-slate-900 text-xs uppercase tracking-wider">
+                      <div className="mt-4 pt-4 border-t border-slate-800 space-y-4 text-xs text-slate-200 animate-fade-in">
+                        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
+                          <p className="font-extrabold text-white text-xs uppercase tracking-wider">
                             How to connect your personal MongoDB Atlas database:
                           </p>
-                          <ol className="list-decimal list-inside space-y-1.5 leading-relaxed text-slate-600">
+                          <ol className="list-decimal list-inside space-y-1.5 leading-relaxed text-slate-300">
                             <li>
-                              Open your MongoDB Atlas account (<span className="font-semibold text-slate-900">cloud.mongodb.com</span>) and click <strong>Database &rarr; Connect</strong>.
+                              Open your MongoDB Atlas account (<span className="font-bold text-white">cloud.mongodb.com</span>) and click <strong>Database &rarr; Connect</strong>.
                             </li>
                             <li>
                               Select <strong>Drivers &rarr; Node.js</strong> and copy your connection string URI:
-                              <div className="mt-1 p-2 bg-slate-900 text-amber-300 font-mono text-[11px] rounded-lg overflow-x-auto select-all">
+                              <div className="mt-1 p-2.5 bg-slate-950 text-amber-300 font-mono text-[11px] rounded-lg border border-slate-800 overflow-x-auto select-all">
                                 mongodb+srv://&lt;username&gt;:&lt;password&gt;@&lt;cluster-name&gt;.mongodb.net/flats_n_beyond?retryWrites=true&amp;w=majority
                               </div>
                             </li>
                             <li>
-                              Open the project root file <span className="font-semibold text-slate-900">.env</span> (or use the live tester below) and update:
-                              <div className="mt-1 p-2 bg-slate-900 text-amber-300 font-mono text-[11px] rounded-lg overflow-x-auto select-all">
+                              Open the project root file <span className="font-bold text-white">.env</span> (or use the live tester below) and update:
+                              <div className="mt-1 p-2.5 bg-slate-950 text-amber-300 font-mono text-[11px] rounded-lg border border-slate-800 overflow-x-auto select-all">
                                 MONGODB_URI=mongodb+srv://&lt;your-username&gt;:&lt;your-password&gt;@cluster0.abcde.mongodb.net/flats_n_beyond?retryWrites=true&amp;w=majority
                               </div>
                             </li>
                             <li>
-                              Restart the development servers with <code className="bg-amber-100/70 px-1 py-0.5 rounded font-mono text-slate-900">npm run dev:all</code>.
+                              Restart the development servers with <code className="bg-slate-800 text-amber-300 px-1.5 py-0.5 rounded font-mono">npm run dev:all</code>.
                             </li>
                           </ol>
                         </div>
 
                         {/* Live Atlas URI Tester */}
-                        <form onSubmit={handleTestConnection} className="bg-white p-4 rounded-xl border border-amber-100 space-y-2.5">
-                          <label className="text-xs font-bold text-slate-900 uppercase tracking-wider block">
+                        <form onSubmit={handleTestConnection} className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2.5">
+                          <label className="text-xs font-bold text-white uppercase tracking-wider block">
                             Quick Connection Test (Verify Atlas URI from Browser):
                           </label>
                           <div className="flex flex-col sm:flex-row gap-2">
@@ -758,31 +1178,31 @@ export default function AdminPanelModal({
                               value={testUriInput}
                               onChange={(e) => setTestUriInput(e.target.value)}
                               placeholder="Paste mongodb+srv://... to test connection"
-                              className="flex-1 px-3.5 py-2 text-xs font-mono bg-amber-50/40 border border-amber-100 rounded-xl text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white"
+                              className="flex-1 px-3.5 py-2 text-xs font-mono bg-slate-950 border border-slate-700 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
                             />
                             <button
                               type="submit"
                               disabled={isTestingUri || !testUriInput.trim()}
-                              className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors shrink-0 flex items-center justify-center gap-1.5"
+                              className="px-4 py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-extrabold rounded-xl text-xs cursor-pointer transition-colors shrink-0 flex items-center justify-center gap-1.5 shadow-sm"
                             >
                               {isTestingUri ? (
                                 <>
-                                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" />
                                   <span>Testing...</span>
                                 </>
                               ) : (
                                 <>
-                                  <Check className="w-3.5 h-3.5 text-amber-400" />
+                                  <Check className="w-3.5 h-3.5 text-slate-950" />
                                   <span>Test URI</span>
                                 </>
                               )}
                             </button>
                           </div>
                           {testResult && (
-                            <div className={`p-2.5 rounded-lg text-xs font-medium ${
+                            <div className={`p-2.5 rounded-lg text-xs font-bold ${
                               testResult.success
-                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                                : 'bg-rose-50 text-rose-800 border border-rose-200'
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
                             }`}>
                               {testResult.message}
                             </div>
@@ -792,38 +1212,38 @@ export default function AdminPanelModal({
                     )}
                   </div>
 
-                  {/* Summary Metric Counters */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="p-3.5 bg-amber-50/40 rounded-2xl border border-amber-100">
-                      <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                  {/* Summary Metric Counters - High Contrast Distinct Cards */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+                    <div className="p-4 bg-slate-950 text-white rounded-2xl border border-slate-800 shadow-sm">
+                      <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">
                         Total Enquiries
                       </span>
-                      <p className="text-2xl font-extrabold text-slate-900 mt-1">{enquiries.length}</p>
+                      <p className="text-3xl font-black text-white mt-1">{enquiries.length}</p>
                     </div>
 
-                    <div className="p-3.5 bg-amber-50/40 rounded-2xl border border-amber-100">
-                      <span className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider block">
+                    <div className="p-4 bg-amber-500/10 rounded-2xl border-2 border-amber-400 shadow-xs">
+                      <span className="text-[11px] font-bold text-amber-950 uppercase tracking-wider block">
                         New Inquiries
                       </span>
-                      <p className="text-2xl font-extrabold text-amber-600 mt-1">
+                      <p className="text-3xl font-black text-amber-700 mt-1">
                         {enquiries.filter((e) => e.status === 'New').length}
                       </p>
                     </div>
 
-                    <div className="p-3.5 bg-amber-50/40 rounded-2xl border border-amber-100">
-                      <span className="text-[11px] font-semibold text-blue-700 uppercase tracking-wider block">
+                    <div className="p-4 bg-blue-500/10 rounded-2xl border-2 border-blue-400 shadow-xs">
+                      <span className="text-[11px] font-bold text-blue-950 uppercase tracking-wider block">
                         In Contact
                       </span>
-                      <p className="text-2xl font-extrabold text-blue-600 mt-1">
+                      <p className="text-3xl font-black text-blue-700 mt-1">
                         {enquiries.filter((e) => e.status === 'Contacted').length}
                       </p>
                     </div>
 
-                    <div className="p-3.5 bg-amber-50/40 rounded-2xl border border-amber-100">
-                      <span className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider block">
+                    <div className="p-4 bg-emerald-500/10 rounded-2xl border-2 border-emerald-400 shadow-xs">
+                      <span className="text-[11px] font-bold text-emerald-950 uppercase tracking-wider block">
                         Tours & Closed
                       </span>
-                      <p className="text-2xl font-extrabold text-emerald-600 mt-1">
+                      <p className="text-3xl font-black text-emerald-700 mt-1">
                         {enquiries.filter((e) => e.status === 'Tour Scheduled' || e.status === 'Closed').length}
                       </p>
                     </div>
@@ -832,15 +1252,15 @@ export default function AdminPanelModal({
                   {/* Filter & Search Bar */}
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
                     {/* Status Filter Buttons */}
-                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                    <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
                       {['All', 'New', 'Contacted', 'Tour Scheduled', 'Closed'].map((status) => (
                         <button
                           key={status}
                           onClick={() => setLeadFilter(status)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all shrink-0 cursor-pointer ${
+                          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer shadow-xs ${
                             leadFilter === status
-                              ? 'bg-slate-900 text-white shadow-2xs'
-                              : 'bg-white hover:bg-amber-50 text-slate-700 border border-amber-100'
+                              ? 'bg-slate-950 text-white border border-slate-900 ring-2 ring-slate-900/10'
+                              : 'bg-white hover:bg-slate-100 text-slate-800 border border-slate-300'
                           }`}
                         >
                           {status}
@@ -849,14 +1269,14 @@ export default function AdminPanelModal({
                     </div>
 
                     {/* Search Input */}
-                    <div className="relative min-w-[240px]">
-                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <div className="relative min-w-[260px]">
+                      <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                       <input
                         type="text"
                         value={leadSearch}
                         onChange={(e) => setLeadSearch(e.target.value)}
                         placeholder="Search name, phone, property..."
-                        className="w-full pl-9 pr-3.5 py-1.5 text-xs bg-amber-50/40 border border-amber-100 rounded-xl text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white"
+                        className="w-full pl-9 pr-3.5 py-2 text-xs bg-white border-2 border-slate-300 rounded-xl text-slate-950 placeholder:text-slate-500 font-semibold focus:outline-none focus:border-slate-950 focus:ring-2 focus:ring-slate-950/10"
                       />
                     </div>
                   </div>
@@ -865,20 +1285,20 @@ export default function AdminPanelModal({
                   {loadingLeads ? (
                     <div className="py-16 text-center text-slate-500 space-y-2">
                       <RefreshCw className="w-6 h-6 animate-spin mx-auto text-amber-600" />
-                      <p className="text-xs font-semibold">Loading customer enquiries...</p>
+                      <p className="text-xs font-bold">Loading customer enquiries...</p>
                     </div>
                   ) : filteredEnquiries.length === 0 ? (
-                    <div className="py-14 text-center bg-amber-50/30 rounded-2xl border border-dashed border-amber-200 space-y-2">
+                    <div className="py-14 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-300 space-y-2">
                       <Users className="w-8 h-8 text-slate-400 mx-auto" />
-                      <p className="text-sm font-bold text-slate-700">No enquiries found</p>
-                      <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                      <p className="text-sm font-extrabold text-slate-800">No enquiries found</p>
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto font-medium">
                         {leadSearch || leadFilter !== 'All'
                           ? 'No results match the selected filter or search term. Try resetting the filters.'
                           : 'Customer submissions from the website will appear here in real time.'}
                       </p>
                     </div>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-3.5">
                       {filteredEnquiries.map((lead) => {
                         const formattedDate = lead.createdAt
                           ? new Date(lead.createdAt).toLocaleDateString('en-IN', {
@@ -899,26 +1319,26 @@ export default function AdminPanelModal({
                         return (
                           <div
                             key={lead._id}
-                            className="p-4 sm:p-5 rounded-2xl bg-white border border-amber-100 hover:border-amber-200 shadow-2xs hover:shadow-xs transition-all space-y-3"
+                            className="p-5 rounded-2xl bg-white border-2 border-slate-200 hover:border-slate-400 shadow-xs hover:shadow-md transition-all space-y-3.5"
                           >
                             {/* Card Top: Customer & Status */}
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-100/60 pb-3">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
                               <div>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <h4 className="text-sm font-bold text-slate-900">{lead.name}</h4>
-                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                <div className="flex items-center gap-2.5 flex-wrap">
+                                  <h4 className="text-base font-extrabold text-slate-950">{lead.name}</h4>
+                                  <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border shadow-2xs ${
                                     lead.status === 'New'
-                                      ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                      ? 'bg-amber-100 text-amber-950 border-amber-300'
                                       : lead.status === 'Contacted'
-                                      ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                      ? 'bg-blue-100 text-blue-950 border-blue-300'
                                       : lead.status === 'Tour Scheduled'
-                                      ? 'bg-purple-100 text-purple-800 border border-purple-200'
-                                      : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                      ? 'bg-purple-100 text-purple-950 border-purple-300'
+                                      : 'bg-emerald-100 text-emerald-950 border-emerald-300'
                                   }`}>
                                     {lead.status}
                                   </span>
-                                  <span className="text-[11px] text-slate-400 flex items-center gap-1">
-                                    <Clock className="w-3 h-3 text-slate-400" />
+                                  <span className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">
+                                    <Clock className="w-3.5 h-3.5 text-slate-400" />
                                     {formattedDate}
                                   </span>
                                 </div>
@@ -926,12 +1346,12 @@ export default function AdminPanelModal({
 
                               {/* Status Dropdown Selector */}
                               <div className="flex items-center gap-2">
-                                <label className="text-[11px] text-slate-400 font-semibold">Status:</label>
+                                <label className="text-[11px] text-slate-600 font-bold uppercase tracking-wider">Status:</label>
                                 <select
                                   value={lead.status}
                                   onChange={(e) => handleStatusChange(lead._id, e.target.value)}
                                   disabled={updatingLeadId === lead._id}
-                                  className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-amber-50/60 border border-amber-200 text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                                  className="text-xs font-bold px-3 py-1.5 rounded-xl bg-slate-50 border-2 border-slate-300 text-slate-950 focus:outline-none focus:border-slate-950 cursor-pointer shadow-2xs"
                                 >
                                   <option value="New">New</option>
                                   <option value="Contacted">Contacted</option>
@@ -942,40 +1362,40 @@ export default function AdminPanelModal({
                             </div>
 
                             {/* Card Middle: Property and Enquiry Information */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 text-xs">
                               {/* Interest */}
-                              <div className="space-y-0.5">
-                                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                              <div className="space-y-1">
+                                <span className="text-[10px] uppercase font-black text-slate-500 tracking-wider">
                                   Property / Service Interest
                                 </span>
-                                <p className="font-semibold text-slate-900">
+                                <p className="font-extrabold text-slate-950 text-xs">
                                   {lead.propertyTitle || 'General NCR Advisory'}
                                 </p>
-                                <p className="text-slate-500 text-[11px]">
+                                <p className="text-slate-600 font-semibold text-[11px]">
                                   📍 {lead.location} • {lead.serviceType}
                                   {lead.budget && ` • Budget: ${lead.budget}`}
                                 </p>
                               </div>
 
                               {/* Direct Contact Links */}
-                              <div className="space-y-0.5">
-                                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                              <div className="space-y-1">
+                                <span className="text-[10px] uppercase font-black text-slate-500 tracking-wider">
                                   Contact Information
                                 </span>
                                 <div className="flex flex-col gap-1">
                                   <a
                                     href={`tel:${lead.phone}`}
-                                    className="font-medium text-slate-800 hover:text-amber-700 inline-flex items-center gap-1.5 transition-colors"
+                                    className="font-bold text-slate-900 hover:text-amber-800 inline-flex items-center gap-1.5 transition-colors"
                                   >
-                                    <Phone className="w-3 h-3 text-amber-600" />
+                                    <Phone className="w-3.5 h-3.5 text-amber-600" />
                                     <span>{lead.phone}</span>
                                   </a>
                                   {lead.email && (
                                     <a
                                       href={`mailto:${lead.email}`}
-                                      className="font-medium text-slate-600 hover:text-amber-700 inline-flex items-center gap-1.5 transition-colors truncate"
+                                      className="font-semibold text-slate-700 hover:text-amber-800 inline-flex items-center gap-1.5 transition-colors truncate"
                                     >
-                                      <Mail className="w-3 h-3 text-amber-600" />
+                                      <Mail className="w-3.5 h-3.5 text-amber-600" />
                                       <span className="truncate">{lead.email}</span>
                                     </a>
                                   )}
@@ -983,15 +1403,15 @@ export default function AdminPanelModal({
                               </div>
 
                               {/* Preferred Schedule / Source */}
-                              <div className="space-y-0.5">
-                                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                              <div className="space-y-1">
+                                <span className="text-[10px] uppercase font-black text-slate-500 tracking-wider">
                                   Preferred Visit Date
                                 </span>
-                                <p className="font-semibold text-slate-800 flex items-center gap-1.5">
+                                <p className="font-bold text-slate-950 flex items-center gap-1.5">
                                   <Calendar className="w-3.5 h-3.5 text-amber-600" />
                                   <span>{lead.preferredDate || 'Flexible / Immediate Consultation'}</span>
                                 </p>
-                                <span className="text-[10px] text-slate-400 block">
+                                <span className="text-[10px] font-semibold text-slate-500 block">
                                   Source: {lead.source || 'Website Form'}
                                 </span>
                               </div>
@@ -999,7 +1419,7 @@ export default function AdminPanelModal({
 
                             {/* Client Notes / Special Requirements */}
                             {lead.notes && (
-                              <div className="p-3 bg-amber-50/40 rounded-xl border border-amber-100 text-xs text-slate-700 leading-relaxed italic">
+                              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-300 text-xs text-slate-900 font-medium leading-relaxed italic">
                                 &ldquo;{lead.notes}&rdquo;
                               </div>
                             )}
@@ -1012,18 +1432,18 @@ export default function AdminPanelModal({
                                   href={waUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs transition-colors"
+                                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold inline-flex items-center gap-2 shadow-xs transition-colors"
                                 >
-                                  <MessageCircle className="w-3.5 h-3.5" />
+                                  <MessageCircle className="w-4 h-4" />
                                   <span>WhatsApp Client</span>
                                 </a>
 
                                 {/* 1-Click Phone Call */}
                                 <a
                                   href={`tel:${lead.phone}`}
-                                  className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs transition-colors"
+                                  className="px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-2 shadow-xs transition-colors"
                                 >
-                                  <Phone className="w-3 h-3 text-amber-400" />
+                                  <Phone className="w-3.5 h-3.5 text-amber-400" />
                                   <span>Call Now</span>
                                 </a>
                               </div>
@@ -1031,17 +1451,17 @@ export default function AdminPanelModal({
                               {/* Delete Enquiry */}
                               <div>
                                 {leadDeleteConfirmId === lead._id ? (
-                                  <div className="flex items-center gap-2 p-1 rounded-lg bg-rose-50 border border-rose-200">
-                                    <span className="text-[11px] font-semibold text-rose-800">Delete enquiry?</span>
+                                  <div className="flex items-center gap-2 p-1.5 rounded-xl bg-rose-50 border border-rose-300">
+                                    <span className="text-[11px] font-bold text-rose-950">Delete enquiry?</span>
                                     <button
                                       onClick={() => handleDeleteLead(lead._id, lead.name)}
-                                      className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold rounded cursor-pointer"
+                                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg cursor-pointer"
                                     >
                                       Confirm
                                     </button>
                                     <button
                                       onClick={() => setLeadDeleteConfirmId(null)}
-                                      className="px-2 py-0.5 bg-slate-200 text-slate-700 text-[11px] rounded cursor-pointer"
+                                      className="px-2 py-1 bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg cursor-pointer"
                                     >
                                       Cancel
                                     </button>
@@ -1049,7 +1469,7 @@ export default function AdminPanelModal({
                                 ) : (
                                   <button
                                     onClick={() => setLeadDeleteConfirmId(lead._id)}
-                                    className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                                    className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-slate-300 rounded-xl transition-colors cursor-pointer"
                                     title="Delete Lead"
                                   >
                                     <Trash2 className="w-4 h-4" />
