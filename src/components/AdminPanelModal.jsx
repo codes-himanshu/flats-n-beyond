@@ -216,22 +216,19 @@ export default function AdminPanelModal({
     }
   }, []);
 
+  // Polling for live enquiries and DB health while admin panel is open
   useEffect(() => {
-    let active = true;
+    let interval = null;
     if (isAuthenticated && isOpen) {
-      Promise.all([fetchDatabaseStatus(), fetchEnquiries()]).then(([statusRes, leadsRes]) => {
-        if (active) {
-          setDbStatus(statusRes);
-          if (Array.isArray(leadsRes)) {
-            setEnquiries(leadsRes);
-          }
-        }
-      });
+      loadLeadsAndStatus();
+      interval = setInterval(() => {
+        loadLeadsAndStatus();
+      }, 20000);
     }
     return () => {
-      active = false;
+      if (interval) clearInterval(interval);
     };
-  }, [isAuthenticated, isOpen]);
+  }, [isAuthenticated, isOpen, loadLeadsAndStatus]);
 
   if (!isOpen) return null;
 
@@ -598,8 +595,8 @@ export default function AdminPanelModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in text-left">
-      <div className="relative bg-white rounded-3xl max-w-5xl w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-amber-100 flex flex-col">
+    <div className="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in text-left">
+      <div className="relative bg-white rounded-3xl max-w-5xl w-full max-h-[92vh] overflow-y-auto overscroll-contain shadow-2xl border-2 border-slate-300 flex flex-col">
         
         {/* ================================================================== */}
         {/* UNAUTHENTICATED STRICT 2-STEP LOGIN GATEWAY                        */}
@@ -734,21 +731,21 @@ export default function AdminPanelModal({
               <form onSubmit={handleStep2Submit} autoComplete="off" className="space-y-5 text-left animate-fade-in">
                 
                 {/* Session Security Code Notification */}
-                <div className="p-4 bg-amber-50/90 border border-amber-300 rounded-2xl space-y-2">
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                       <ShieldCheck className="w-4 h-4 text-amber-600" />
                       <span>Session Security Code</span>
                     </span>
-                    <span className="text-[11px] font-mono font-bold text-amber-950 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-200">
+                    <span className="text-[11px] font-mono font-medium text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200">
                       ⏱ {formatTimer(otpCountdown)}
                     </span>
                   </div>
 
                   {sessionOtp && (
                     <div className="flex items-center justify-between pt-1">
-                      <span className="text-xs font-semibold text-slate-700">Verification Code:</span>
-                      <strong className="font-mono text-slate-950 font-black text-sm tracking-widest bg-white px-3 py-1 rounded-lg border-2 border-amber-300 shadow-2xs">
+                      <span className="text-xs font-medium text-slate-600">Verification Code:</span>
+                      <strong className="font-mono text-slate-900 font-bold text-sm tracking-widest bg-white px-3 py-1 rounded-lg border border-slate-200 shadow-2xs">
                         {sessionOtp}
                       </strong>
                     </div>
@@ -851,81 +848,81 @@ export default function AdminPanelModal({
           /* AUTHENTICATED MANAGEMENT PORTAL - HIGH CONTRAST UPGRADE        */
           /* ============================================================== */
           <>
-            {/* Header: High-Contrast Obsidian Theme with Gold & Rose Accents */}
+            {/* Header: Clean Obsidian Theme */}
             <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between bg-slate-950 text-white rounded-t-3xl">
               <div className="flex items-center gap-3.5">
-                <div className="w-11 h-11 rounded-xl bg-slate-900 border border-amber-500/30 text-amber-400 flex items-center justify-center shadow-md">
-                  <ShieldCheck className="w-6 h-6 text-amber-400" />
+                <div className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-800 text-amber-500 flex items-center justify-center shadow-sm">
+                  <ShieldCheck className="w-5 h-5 text-amber-500" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2.5 flex-wrap">
-                    <h2 className="text-lg font-extrabold tracking-tight text-white">Flats-n-Beyond Command Console</h2>
-                    <span className="text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-amber-500/40 flex items-center gap-1.5 shadow-xs">
+                    <h2 className="text-base font-bold tracking-tight text-white">Flats-n-Beyond Command Console</h2>
+                    <span className="text-[10px] font-medium uppercase px-2.5 py-0.5 rounded-full bg-slate-900 text-amber-400 border border-slate-800 flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
                       2FA Active Session
                     </span>
-                    <span className="text-[10px] font-semibold text-slate-300 bg-slate-900/90 border border-slate-800 px-2.5 py-0.5 rounded-full hidden sm:inline-flex items-center gap-1">
+                    <span className="text-[10px] font-medium text-slate-400 bg-slate-900 border border-slate-800 px-2.5 py-0.5 rounded-full hidden sm:inline-flex items-center gap-1">
                       <Clock className="w-3 h-3 text-amber-400" />
-                      5m Inactivity Auto-Lock
+                      5m Auto-Lock
                     </span>
                   </div>
-                  <p className="text-xs text-slate-300 mt-1 font-medium">
-                    Live portfolio inventory management and customer lead pipeline synced directly with MongoDB Atlas.
+                  <p className="text-xs text-slate-400 mt-1">
+                    Live inventory management and customer lead pipeline synced with MongoDB Atlas.
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2">
                 {/* Logout / Lock button */}
                 <button
                   onClick={handleLogout}
-                  className="flex items-center gap-2 text-xs font-bold px-3.5 py-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/70 text-rose-200 transition-all cursor-pointer border border-rose-800/60 shadow-xs"
+                  className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white transition-all cursor-pointer border border-slate-800 shadow-xs"
                   title="Lock and Log Out"
                 >
-                  <LogOut className="w-3.5 h-3.5 text-rose-300" />
+                  <LogOut className="w-3.5 h-3.5 text-slate-400" />
                   <span className="hidden sm:inline">Lock Portal</span>
                 </button>
 
                 <button
                   onClick={onClose}
-                  className="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white flex items-center justify-center transition-colors cursor-pointer border border-slate-700"
+                  className="w-8 h-8 rounded-full bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer border border-slate-800"
                   aria-label="Close admin modal"
                 >
-                  <X className="w-5 h-5" />
+                  <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            {/* High-Contrast Segmented Tab Navigation Controls Bar */}
-            <div className="px-6 py-3.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
-              <div className="flex items-center gap-2.5 flex-wrap">
+            {/* Clean Segmented Tab Navigation Controls Bar */}
+            <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
                 {/* Tab 1: Live Inventory */}
                 <button
                   onClick={() => setActiveTab('inventory')}
-                  className={`px-4 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-2 shadow-xs ${
+                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
                     activeTab === 'inventory'
-                      ? 'bg-slate-950 text-white border border-slate-900 ring-2 ring-slate-900/10'
-                      : 'bg-white hover:bg-slate-200 text-slate-900 border border-slate-300'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
                   }`}
                 >
-                  <Building className="w-4 h-4 text-amber-500" />
+                  <Building className="w-3.5 h-3.5 text-amber-500" />
                   <span>Live Inventory ({properties.length})</span>
                 </button>
 
                 {/* Tab 2: Customer Enquiries / Leads */}
                 <button
                   onClick={() => setActiveTab('leads')}
-                  className={`px-4 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-2 relative shadow-xs ${
+                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 relative ${
                     activeTab === 'leads'
-                      ? 'bg-slate-950 text-white border border-slate-900 ring-2 ring-slate-900/10'
-                      : 'bg-white hover:bg-slate-200 text-slate-900 border border-slate-300'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
                   }`}
                 >
-                  <Users className="w-4 h-4 text-amber-500" />
+                  <Users className="w-3.5 h-3.5 text-amber-500" />
                   <span>Customer Enquiries ({enquiries.length})</span>
                   {newLeadsCount > 0 && (
-                    <span className="px-2 py-0.5 bg-amber-500 text-slate-950 text-[10px] font-black rounded-full shadow-xs">
-                      {newLeadsCount} New
+                    <span className="px-1.5 py-0.5 bg-amber-500 text-slate-950 text-[10px] font-bold rounded-full">
+                      {newLeadsCount}
                     </span>
                   )}
                 </button>
@@ -933,14 +930,14 @@ export default function AdminPanelModal({
                 {/* Tab 3: Add New Property */}
                 <button
                   onClick={() => setActiveTab('add')}
-                  className={`px-4 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-2 shadow-xs ${
+                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
                     activeTab === 'add'
-                      ? 'bg-amber-600 text-white border border-amber-700 ring-2 ring-amber-600/20'
-                      : 'bg-white hover:bg-amber-50 text-amber-950 border border-amber-300'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
                   }`}
                 >
-                  <PlusCircle className="w-4 h-4 text-amber-600" />
-                  <span>Add New Property</span>
+                  <PlusCircle className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Add Property</span>
                 </button>
               </div>
 
@@ -952,10 +949,10 @@ export default function AdminPanelModal({
                       onResetToDefault(currentPasscode);
                     }
                   }}
-                  className="text-xs font-bold text-slate-800 hover:text-slate-950 flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-white hover:bg-slate-200 border border-slate-300 shadow-xs transition-colors cursor-pointer"
+                  className="text-xs font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 shadow-xs transition-colors cursor-pointer"
                   title="Reset to default curated inventory"
                 >
-                  <RotateCcw className="w-3.5 h-3.5 text-slate-600" />
+                  <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
                   <span>Reset Catalog</span>
                 </button>
               )}
@@ -964,15 +961,7 @@ export default function AdminPanelModal({
                 <button
                   onClick={loadLeadsAndStatus}
                   disabled={loadingLeads}
-                  className="text-xs font-bold text-slate-800 hover:text-slate-950 flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-white hover:bg-slate-200 border border-slate-300 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
-                  title="Refresh leads and database connection"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 text-amber-600 ${loadingLeads ? 'animate-spin' : ''}`} />
-                  <span>Refresh Leads</span>
-                </button>
-              )}
-            </div>
-                  className="text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1.5 py-1.5 px-3 rounded-lg hover:bg-amber-100/60 transition-colors cursor-pointer border border-transparent hover:border-amber-200"
+                  className="text-xs font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
                   title="Refresh leads and database connection"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 text-amber-600 ${loadingLeads ? 'animate-spin' : ''}`} />
@@ -989,62 +978,62 @@ export default function AdminPanelModal({
                 <div className="space-y-4">
                   <div className="flex items-center justify-between pb-1 border-b border-slate-200">
                     <div>
-                      <h3 className="text-base font-extrabold text-slate-950">Current Active Listings</h3>
-                      <p className="text-xs font-medium text-slate-600">
+                      <h3 className="text-base font-bold text-slate-900">Current Active Listings</h3>
+                      <p className="text-xs text-slate-500">
                         Changes take effect immediately on the visitor catalog and MongoDB Atlas database.
                       </p>
                     </div>
                     <button
                       onClick={() => setActiveTab('add')}
-                      className="px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-2 shadow-xs transition-colors cursor-pointer"
+                      className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                     >
-                      <PlusCircle className="w-4 h-4 text-amber-400" />
+                      <PlusCircle className="w-3.5 h-3.5 text-amber-400" />
                       <span>New Listing</span>
                     </button>
                   </div>
 
                   {properties.length === 0 ? (
-                    <div className="py-12 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-300">
-                      <p className="text-sm font-extrabold text-slate-800">No properties in inventory</p>
-                      <p className="text-xs text-slate-500 mt-1 mb-4 font-medium">Click below to add a property or restore sample data.</p>
+                    <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300">
+                      <p className="text-sm font-semibold text-slate-800">No properties in inventory</p>
+                      <p className="text-xs text-slate-500 mt-1 mb-4">Click below to add a property or restore sample data.</p>
                       <button
                         onClick={() => onResetToDefault(currentPasscode)}
-                        className="px-4 py-2 bg-slate-950 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer shadow-xs transition-colors"
+                        className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-medium cursor-pointer shadow-xs transition-colors"
                       >
                         Restore Sample Listings
                       </button>
                     </div>
                   ) : (
-                    <div className="divide-y divide-slate-200 border-2 border-slate-200 rounded-2xl overflow-hidden bg-white shadow-xs">
+                    <div className="divide-y divide-slate-100 border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-xs">
                       {properties.map((item) => (
                         <div
                           key={item.id}
-                          className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 transition-colors"
+                          className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/70 transition-colors"
                         >
                           {/* Left: Thumbnail & Details */}
                           <div className="flex items-center gap-4 min-w-0">
                             <img
                               src={item.image}
                               alt={item.title}
-                              className="w-16 h-14 rounded-xl object-cover shrink-0 bg-slate-100 border-2 border-slate-200 shadow-2xs"
+                              className="w-16 h-14 rounded-xl object-cover shrink-0 bg-slate-100 border border-slate-200"
                             />
                             <div className="min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-sm font-extrabold text-slate-950 truncate">
+                                <span className="text-sm font-bold text-slate-900 truncate">
                                   {item.title}
                                 </span>
-                                <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-900 border border-slate-300">
+                                <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
                                   {item.configuration}
                                 </span>
-                                <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-amber-50 text-amber-900 border border-amber-300">
+                                <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200/80">
                                   {item.serviceType}
                                 </span>
                               </div>
-                              <p className="text-xs font-semibold text-slate-600 mt-1 truncate">
+                              <p className="text-xs text-slate-500 mt-1 truncate">
                                 📍 {item.subLocality || item.location} | RERA: {item.rera || 'Verified'}
                               </p>
-                              <p className="text-sm font-black text-amber-800 mt-1">
-                                {item.price} <span className="text-slate-600 font-semibold text-xs">({item.areaSqft} sq.ft)</span>
+                              <p className="text-sm font-bold text-slate-900 mt-0.5">
+                                {item.price} <span className="text-slate-500 font-normal text-xs">({item.areaSqft} sq.ft)</span>
                               </p>
                             </div>
                           </div>
@@ -1052,19 +1041,19 @@ export default function AdminPanelModal({
                           {/* Right: Actions */}
                           <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
                             {deleteConfirmId === item.id ? (
-                              <div className="flex items-center gap-2 p-1.5 rounded-xl bg-rose-50 border border-rose-300 animate-fade-in">
-                                <span className="text-[11px] font-bold text-rose-950 flex items-center gap-1">
+                              <div className="flex items-center gap-2 p-1.5 rounded-xl bg-rose-50 border border-rose-200 animate-fade-in">
+                                <span className="text-[11px] font-medium text-rose-800 flex items-center gap-1">
                                   <AlertTriangle className="w-3.5 h-3.5 text-rose-600" /> Confirm delete?
                                 </span>
                                 <button
                                   onClick={() => handleDelete(item.id)}
-                                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors shadow-2xs"
+                                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors shadow-2xs"
                                 >
                                   Yes, Delete
                                 </button>
                                 <button
                                   onClick={() => setDeleteConfirmId(null)}
-                                  className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-lg cursor-pointer"
+                                  className="px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-medium rounded-lg cursor-pointer"
                                 >
                                   Cancel
                                 </button>
@@ -1072,7 +1061,7 @@ export default function AdminPanelModal({
                             ) : (
                               <button
                                 onClick={() => setDeleteConfirmId(item.id)}
-                                className="p-2.5 rounded-xl text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-300 hover:border-rose-300 transition-colors cursor-pointer"
+                                className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 transition-colors cursor-pointer"
                                 title="Remove listing from live view and database"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -1090,37 +1079,30 @@ export default function AdminPanelModal({
               {activeTab === 'leads' && (
                 <div className="space-y-6 animate-fade-in">
                   
-                  {/* MongoDB Atlas Integration Status Banner - High Contrast Theme */}
-                  <div className={`p-4 sm:p-5 rounded-2xl border-2 transition-all ${
-                    dbStatus?.connected
-                      ? 'bg-emerald-950 text-white border-emerald-700 shadow-sm'
-                      : 'bg-amber-950 text-white border-amber-700 shadow-sm'
-                  }`}>
+                  {/* MongoDB Atlas Integration Status Banner */}
+                  <div className="p-4 sm:p-5 rounded-2xl bg-slate-900 text-white border border-slate-800 shadow-sm transition-all">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="flex items-start gap-3">
-                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
-                          dbStatus?.connected
-                            ? 'bg-emerald-900 border-emerald-600 text-emerald-300 shadow-inner'
-                            : 'bg-amber-900 border-amber-600 text-amber-300 shadow-inner'
-                        }`}>
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border border-slate-800 bg-slate-800/80 text-amber-400 shadow-inner">
                           <Database className="w-5 h-5" />
                         </div>
                         <div>
                           <div className="flex items-center gap-2 flex-wrap">
-                            <h4 className="text-sm font-extrabold text-white">
+                            <h4 className="text-sm font-bold text-white">
                               {dbStatus?.connected
                                 ? `MongoDB Atlas: Connected (${dbStatus.dbName || 'flats_n_beyond'})`
-                                : 'MongoDB Atlas Ready (Active Fallback Storage)'}
+                                : 'MongoDB Atlas Ready (Local Storage Active)'}
                             </h4>
-                            <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
+                            <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1.5 ${
                               dbStatus?.connected
-                                ? 'bg-emerald-400 text-slate-950'
-                                : 'bg-amber-400 text-slate-950'
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                             }`}>
-                              {dbStatus?.connected ? 'Cloud Atlas Synced' : 'Awaiting Personal URI'}
+                              <span className={`w-1.5 h-1.5 rounded-full ${dbStatus?.connected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                              {dbStatus?.connected ? 'Cloud Atlas Synced' : 'Resilient Fallback Mode'}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-200 mt-1 leading-relaxed font-medium">
+                          <p className="text-xs text-slate-300 mt-1 leading-relaxed">
                             {dbStatus?.connected
                               ? `All customer leads and tour requests are streaming in real-time to your MongoDB Atlas collection: "enquiries".`
                               : `The backend is saving leads into resilient storage. Connect your personal MongoDB Atlas database to persist leads in your cloud cluster.`}
@@ -1130,34 +1112,34 @@ export default function AdminPanelModal({
 
                       <button
                         onClick={() => setShowMongoInstructions(!showMongoInstructions)}
-                        className="self-start sm:self-center px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-white transition-colors flex items-center gap-1.5 shrink-0 shadow-sm cursor-pointer"
+                        className="self-start sm:self-center px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-slate-200 hover:text-white transition-colors flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer"
                       >
                         <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                        <span>{showMongoInstructions ? 'Hide Setup Guide' : 'MongoDB Atlas Connection Setup'}</span>
+                        <span>{showMongoInstructions ? 'Hide Setup Guide' : 'Connection Setup'}</span>
                         {showMongoInstructions ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       </button>
                     </div>
 
                     {/* Collapsible Atlas Setup Instructions */}
                     {showMongoInstructions && (
-                      <div className="mt-4 pt-4 border-t border-slate-800 space-y-4 text-xs text-slate-200 animate-fade-in">
-                        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
-                          <p className="font-extrabold text-white text-xs uppercase tracking-wider">
+                      <div className="mt-4 pt-4 border-t border-slate-800 space-y-4 text-xs text-slate-300 animate-fade-in">
+                        <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                          <p className="font-semibold text-white text-xs uppercase tracking-wider">
                             How to connect your personal MongoDB Atlas database:
                           </p>
                           <ol className="list-decimal list-inside space-y-1.5 leading-relaxed text-slate-300">
                             <li>
-                              Open your MongoDB Atlas account (<span className="font-bold text-white">cloud.mongodb.com</span>) and click <strong>Database &rarr; Connect</strong>.
+                              Open your MongoDB Atlas account (<span className="text-white font-medium">cloud.mongodb.com</span>) and click <strong>Database &rarr; Connect</strong>.
                             </li>
                             <li>
                               Select <strong>Drivers &rarr; Node.js</strong> and copy your connection string URI:
-                              <div className="mt-1 p-2.5 bg-slate-950 text-amber-300 font-mono text-[11px] rounded-lg border border-slate-800 overflow-x-auto select-all">
+                              <div className="mt-1 p-2.5 bg-slate-900 text-amber-300 font-mono text-[11px] rounded-lg border border-slate-800 overflow-x-auto select-all">
                                 mongodb+srv://&lt;username&gt;:&lt;password&gt;@&lt;cluster-name&gt;.mongodb.net/flats_n_beyond?retryWrites=true&amp;w=majority
                               </div>
                             </li>
                             <li>
-                              Open the project root file <span className="font-bold text-white">.env</span> (or use the live tester below) and update:
-                              <div className="mt-1 p-2.5 bg-slate-950 text-amber-300 font-mono text-[11px] rounded-lg border border-slate-800 overflow-x-auto select-all">
+                              Open the project root file <span className="text-white font-medium">.env</span> (or use the live tester below) and update:
+                              <div className="mt-1 p-2.5 bg-slate-900 text-amber-300 font-mono text-[11px] rounded-lg border border-slate-800 overflow-x-auto select-all">
                                 MONGODB_URI=mongodb+srv://&lt;your-username&gt;:&lt;your-password&gt;@cluster0.abcde.mongodb.net/flats_n_beyond?retryWrites=true&amp;w=majority
                               </div>
                             </li>
@@ -1168,8 +1150,8 @@ export default function AdminPanelModal({
                         </div>
 
                         {/* Live Atlas URI Tester */}
-                        <form onSubmit={handleTestConnection} className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2.5">
-                          <label className="text-xs font-bold text-white uppercase tracking-wider block">
+                        <form onSubmit={handleTestConnection} className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2.5">
+                          <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider block">
                             Quick Connection Test (Verify Atlas URI from Browser):
                           </label>
                           <div className="flex flex-col sm:flex-row gap-2">
@@ -1178,12 +1160,12 @@ export default function AdminPanelModal({
                               value={testUriInput}
                               onChange={(e) => setTestUriInput(e.target.value)}
                               placeholder="Paste mongodb+srv://... to test connection"
-                              className="flex-1 px-3.5 py-2 text-xs font-mono bg-slate-950 border border-slate-700 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
+                              className="flex-1 px-3.5 py-2 text-xs font-mono bg-slate-900 border border-slate-700 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
                             />
                             <button
                               type="submit"
                               disabled={isTestingUri || !testUriInput.trim()}
-                              className="px-4 py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-extrabold rounded-xl text-xs cursor-pointer transition-colors shrink-0 flex items-center justify-center gap-1.5 shadow-sm"
+                              className="px-4 py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold rounded-xl text-xs cursor-pointer transition-colors shrink-0 flex items-center justify-center gap-1.5 shadow-sm"
                             >
                               {isTestingUri ? (
                                 <>
@@ -1199,10 +1181,10 @@ export default function AdminPanelModal({
                             </button>
                           </div>
                           {testResult && (
-                            <div className={`p-2.5 rounded-lg text-xs font-bold ${
+                            <div className={`p-2.5 rounded-lg text-xs font-semibold ${
                               testResult.success
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
                             }`}>
                               {testResult.message}
                             </div>
@@ -1212,38 +1194,50 @@ export default function AdminPanelModal({
                     )}
                   </div>
 
-                  {/* Summary Metric Counters - High Contrast Distinct Cards */}
+                  {/* Summary Metric Counters */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-                    <div className="p-4 bg-slate-950 text-white rounded-2xl border border-slate-800 shadow-sm">
-                      <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">
-                        Total Enquiries
-                      </span>
-                      <p className="text-3xl font-black text-white mt-1">{enquiries.length}</p>
+                    <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                          Total Leads
+                        </span>
+                        <span className="w-2 h-2 rounded-full bg-slate-400" />
+                      </div>
+                      <p className="text-2xl font-bold text-slate-900 mt-1.5">{enquiries.length}</p>
                     </div>
 
-                    <div className="p-4 bg-amber-500/10 rounded-2xl border-2 border-amber-400 shadow-xs">
-                      <span className="text-[11px] font-bold text-amber-950 uppercase tracking-wider block">
-                        New Inquiries
-                      </span>
-                      <p className="text-3xl font-black text-amber-700 mt-1">
+                    <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                          New Inquiries
+                        </span>
+                        <span className="w-2 h-2 rounded-full bg-amber-500" />
+                      </div>
+                      <p className="text-2xl font-bold text-amber-600 mt-1.5">
                         {enquiries.filter((e) => e.status === 'New').length}
                       </p>
                     </div>
 
-                    <div className="p-4 bg-blue-500/10 rounded-2xl border-2 border-blue-400 shadow-xs">
-                      <span className="text-[11px] font-bold text-blue-950 uppercase tracking-wider block">
-                        In Contact
-                      </span>
-                      <p className="text-3xl font-black text-blue-700 mt-1">
+                    <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                          In Contact
+                        </span>
+                        <span className="w-2 h-2 rounded-full bg-cyan-600" />
+                      </div>
+                      <p className="text-2xl font-bold text-cyan-700 mt-1.5">
                         {enquiries.filter((e) => e.status === 'Contacted').length}
                       </p>
                     </div>
 
-                    <div className="p-4 bg-emerald-500/10 rounded-2xl border-2 border-emerald-400 shadow-xs">
-                      <span className="text-[11px] font-bold text-emerald-950 uppercase tracking-wider block">
-                        Tours & Closed
-                      </span>
-                      <p className="text-3xl font-black text-emerald-700 mt-1">
+                    <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-slate-300 transition-all">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                          Tours & Closed
+                        </span>
+                        <span className="w-2 h-2 rounded-full bg-slate-700" />
+                      </div>
+                      <p className="text-2xl font-bold text-slate-800 mt-1.5">
                         {enquiries.filter((e) => e.status === 'Tour Scheduled' || e.status === 'Closed').length}
                       </p>
                     </div>
@@ -1257,10 +1251,10 @@ export default function AdminPanelModal({
                         <button
                           key={status}
                           onClick={() => setLeadFilter(status)}
-                          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer shadow-xs ${
+                          className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all shrink-0 cursor-pointer ${
                             leadFilter === status
-                              ? 'bg-slate-950 text-white border border-slate-900 ring-2 ring-slate-900/10'
-                              : 'bg-white hover:bg-slate-100 text-slate-800 border border-slate-300'
+                              ? 'bg-slate-900 text-white shadow-xs'
+                              : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
                           }`}
                         >
                           {status}
@@ -1270,13 +1264,13 @@ export default function AdminPanelModal({
 
                     {/* Search Input */}
                     <div className="relative min-w-[260px]">
-                      <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                       <input
                         type="text"
                         value={leadSearch}
                         onChange={(e) => setLeadSearch(e.target.value)}
                         placeholder="Search name, phone, property..."
-                        className="w-full pl-9 pr-3.5 py-2 text-xs bg-white border-2 border-slate-300 rounded-xl text-slate-950 placeholder:text-slate-500 font-semibold focus:outline-none focus:border-slate-950 focus:ring-2 focus:ring-slate-950/10"
+                        className="w-full pl-9 pr-3.5 py-1.5 text-xs bg-white border border-slate-200 rounded-xl text-slate-900 placeholder:text-slate-400 font-medium focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-300"
                       />
                     </div>
                   </div>
@@ -1288,10 +1282,10 @@ export default function AdminPanelModal({
                       <p className="text-xs font-bold">Loading customer enquiries...</p>
                     </div>
                   ) : filteredEnquiries.length === 0 ? (
-                    <div className="py-14 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-300 space-y-2">
+                    <div className="py-14 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 space-y-2">
                       <Users className="w-8 h-8 text-slate-400 mx-auto" />
-                      <p className="text-sm font-extrabold text-slate-800">No enquiries found</p>
-                      <p className="text-xs text-slate-500 max-w-sm mx-auto font-medium">
+                      <p className="text-sm font-semibold text-slate-800">No enquiries found</p>
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto">
                         {leadSearch || leadFilter !== 'All'
                           ? 'No results match the selected filter or search term. Try resetting the filters.'
                           : 'Customer submissions from the website will appear here in real time.'}
@@ -1319,25 +1313,25 @@ export default function AdminPanelModal({
                         return (
                           <div
                             key={lead._id}
-                            className="p-5 rounded-2xl bg-white border-2 border-slate-200 hover:border-slate-400 shadow-xs hover:shadow-md transition-all space-y-3.5"
+                            className="p-5 rounded-2xl bg-white border border-slate-200/80 hover:border-slate-300 shadow-xs transition-all space-y-3.5"
                           >
                             {/* Card Top: Customer & Status */}
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
                               <div>
                                 <div className="flex items-center gap-2.5 flex-wrap">
-                                  <h4 className="text-base font-extrabold text-slate-950">{lead.name}</h4>
-                                  <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border shadow-2xs ${
+                                  <h4 className="text-base font-bold text-slate-900">{lead.name}</h4>
+                                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${
                                     lead.status === 'New'
-                                      ? 'bg-amber-100 text-amber-950 border-amber-300'
+                                      ? 'bg-amber-50 text-amber-800 border-amber-200'
                                       : lead.status === 'Contacted'
-                                      ? 'bg-blue-100 text-blue-950 border-blue-300'
+                                      ? 'bg-cyan-50 text-cyan-800 border-cyan-200'
                                       : lead.status === 'Tour Scheduled'
-                                      ? 'bg-purple-100 text-purple-950 border-purple-300'
-                                      : 'bg-emerald-100 text-emerald-950 border-emerald-300'
+                                      ? 'bg-slate-100 text-slate-800 border-slate-200'
+                                      : 'bg-slate-900 text-white border-slate-900'
                                   }`}>
                                     {lead.status}
                                   </span>
-                                  <span className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">
+                                  <span className="text-[11px] text-slate-400 font-normal flex items-center gap-1">
                                     <Clock className="w-3.5 h-3.5 text-slate-400" />
                                     {formattedDate}
                                   </span>
@@ -1346,12 +1340,12 @@ export default function AdminPanelModal({
 
                               {/* Status Dropdown Selector */}
                               <div className="flex items-center gap-2">
-                                <label className="text-[11px] text-slate-600 font-bold uppercase tracking-wider">Status:</label>
+                                <label className="text-[11px] text-slate-500 font-medium uppercase tracking-wider">Status:</label>
                                 <select
                                   value={lead.status}
                                   onChange={(e) => handleStatusChange(lead._id, e.target.value)}
                                   disabled={updatingLeadId === lead._id}
-                                  className="text-xs font-bold px-3 py-1.5 rounded-xl bg-slate-50 border-2 border-slate-300 text-slate-950 focus:outline-none focus:border-slate-950 cursor-pointer shadow-2xs"
+                                  className="text-xs font-medium px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-slate-400 cursor-pointer shadow-xs"
                                 >
                                   <option value="New">New</option>
                                   <option value="Contacted">Contacted</option>
@@ -1365,13 +1359,13 @@ export default function AdminPanelModal({
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 text-xs">
                               {/* Interest */}
                               <div className="space-y-1">
-                                <span className="text-[10px] uppercase font-black text-slate-500 tracking-wider">
+                                <span className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
                                   Property / Service Interest
                                 </span>
-                                <p className="font-extrabold text-slate-950 text-xs">
+                                <p className="font-bold text-slate-900 text-xs">
                                   {lead.propertyTitle || 'General NCR Advisory'}
                                 </p>
-                                <p className="text-slate-600 font-semibold text-[11px]">
+                                <p className="text-slate-500 font-normal text-[11px]">
                                   📍 {lead.location} • {lead.serviceType}
                                   {lead.budget && ` • Budget: ${lead.budget}`}
                                 </p>
@@ -1379,13 +1373,13 @@ export default function AdminPanelModal({
 
                               {/* Direct Contact Links */}
                               <div className="space-y-1">
-                                <span className="text-[10px] uppercase font-black text-slate-500 tracking-wider">
+                                <span className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
                                   Contact Information
                                 </span>
                                 <div className="flex flex-col gap-1">
                                   <a
                                     href={`tel:${lead.phone}`}
-                                    className="font-bold text-slate-900 hover:text-amber-800 inline-flex items-center gap-1.5 transition-colors"
+                                    className="font-medium text-slate-800 hover:text-amber-600 inline-flex items-center gap-1.5 transition-colors"
                                   >
                                     <Phone className="w-3.5 h-3.5 text-amber-600" />
                                     <span>{lead.phone}</span>
@@ -1393,7 +1387,7 @@ export default function AdminPanelModal({
                                   {lead.email && (
                                     <a
                                       href={`mailto:${lead.email}`}
-                                      className="font-semibold text-slate-700 hover:text-amber-800 inline-flex items-center gap-1.5 transition-colors truncate"
+                                      className="font-normal text-slate-600 hover:text-amber-600 inline-flex items-center gap-1.5 transition-colors truncate"
                                     >
                                       <Mail className="w-3.5 h-3.5 text-amber-600" />
                                       <span className="truncate">{lead.email}</span>
@@ -1404,14 +1398,14 @@ export default function AdminPanelModal({
 
                               {/* Preferred Schedule / Source */}
                               <div className="space-y-1">
-                                <span className="text-[10px] uppercase font-black text-slate-500 tracking-wider">
+                                <span className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
                                   Preferred Visit Date
                                 </span>
-                                <p className="font-bold text-slate-950 flex items-center gap-1.5">
+                                <p className="font-medium text-slate-900 flex items-center gap-1.5">
                                   <Calendar className="w-3.5 h-3.5 text-amber-600" />
                                   <span>{lead.preferredDate || 'Flexible / Immediate Consultation'}</span>
                                 </p>
-                                <span className="text-[10px] font-semibold text-slate-500 block">
+                                <span className="text-[10px] font-normal text-slate-400 block">
                                   Source: {lead.source || 'Website Form'}
                                 </span>
                               </div>
@@ -1419,7 +1413,7 @@ export default function AdminPanelModal({
 
                             {/* Client Notes / Special Requirements */}
                             {lead.notes && (
-                              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-300 text-xs text-slate-900 font-medium leading-relaxed italic">
+                              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/60 text-xs text-slate-700 leading-relaxed italic">
                                 &ldquo;{lead.notes}&rdquo;
                               </div>
                             )}
@@ -1427,23 +1421,23 @@ export default function AdminPanelModal({
                             {/* Card Footer: Quick Actions */}
                             <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
                               <div className="flex items-center gap-2">
-                                {/* 1-Click WhatsApp Trigger */}
+                                {/* WhatsApp Trigger */}
                                 <a
                                   href={waUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold inline-flex items-center gap-2 shadow-xs transition-colors"
+                                  className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium inline-flex items-center gap-2 shadow-xs transition-colors"
                                 >
-                                  <MessageCircle className="w-4 h-4" />
+                                  <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
                                   <span>WhatsApp Client</span>
                                 </a>
 
-                                {/* 1-Click Phone Call */}
+                                {/* Phone Call */}
                                 <a
                                   href={`tel:${lead.phone}`}
-                                  className="px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-2 shadow-xs transition-colors"
+                                  className="px-3.5 py-1.5 rounded-xl bg-white hover:bg-slate-50 text-slate-800 text-xs font-medium inline-flex items-center gap-2 border border-slate-200 shadow-xs transition-colors"
                                 >
-                                  <Phone className="w-3.5 h-3.5 text-amber-400" />
+                                  <Phone className="w-3.5 h-3.5 text-amber-600" />
                                   <span>Call Now</span>
                                 </a>
                               </div>
@@ -1451,17 +1445,17 @@ export default function AdminPanelModal({
                               {/* Delete Enquiry */}
                               <div>
                                 {leadDeleteConfirmId === lead._id ? (
-                                  <div className="flex items-center gap-2 p-1.5 rounded-xl bg-rose-50 border border-rose-300">
-                                    <span className="text-[11px] font-bold text-rose-950">Delete enquiry?</span>
+                                  <div className="flex items-center gap-2 p-1 rounded-xl bg-rose-50 border border-rose-200">
+                                    <span className="text-[11px] font-medium text-rose-800">Delete enquiry?</span>
                                     <button
                                       onClick={() => handleDeleteLead(lead._id, lead.name)}
-                                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg cursor-pointer"
+                                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg cursor-pointer"
                                     >
                                       Confirm
                                     </button>
                                     <button
                                       onClick={() => setLeadDeleteConfirmId(null)}
-                                      className="px-2 py-1 bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg cursor-pointer"
+                                      className="px-2 py-1 bg-slate-200 text-slate-800 text-xs font-medium rounded-lg cursor-pointer"
                                     >
                                       Cancel
                                     </button>
@@ -1469,10 +1463,10 @@ export default function AdminPanelModal({
                                 ) : (
                                   <button
                                     onClick={() => setLeadDeleteConfirmId(lead._id)}
-                                    className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-slate-300 rounded-xl transition-colors cursor-pointer"
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 rounded-xl transition-colors cursor-pointer"
                                     title="Delete Lead"
                                   >
-                                    <Trash2 className="w-4 h-4" />
+                                    <Trash2 className="w-3.5 h-3.5" />
                                   </button>
                                 )}
                               </div>
@@ -1489,8 +1483,8 @@ export default function AdminPanelModal({
 
               {/* TAB 3: ADD NEW PROPERTY FORM */}
               {activeTab === 'add' && (
-                <form onSubmit={handleFormSubmit} className="space-y-6 animate-fade-in">
-                  <div>
+                <form onSubmit={handleFormSubmit} className="space-y-5 animate-fade-in">
+                  <div className="pb-2 border-b border-slate-200">
                     <h3 className="text-base font-bold text-slate-900">Add New Property Listing</h3>
                     <p className="text-xs text-slate-500">
                       Publish a new residence to the live catalog with multi-photo gallery support.
@@ -1502,7 +1496,7 @@ export default function AdminPanelModal({
                     
                     {/* Title */}
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                         Property Title / Project Name *
                       </label>
                       <input
@@ -1511,23 +1505,23 @@ export default function AdminPanelModal({
                         value={formData.title}
                         onChange={handleInputChange}
                         placeholder="e.g. DLF Privana North Residences"
-                        className={`w-full px-3.5 py-2.5 bg-amber-50/40 border rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:bg-white ${
-                          formErrors.title ? 'border-rose-400 focus:ring-rose-500' : 'border-amber-100 focus:ring-amber-500'
+                        className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-300 ${
+                          formErrors.title ? 'border-rose-300 focus:border-rose-400' : 'border-slate-200 focus:border-slate-400'
                         }`}
                       />
-                      {formErrors.title && <p className="text-[11px] text-rose-600 font-semibold">{formErrors.title}</p>}
+                      {formErrors.title && <p className="text-[11px] text-rose-600 font-medium">{formErrors.title}</p>}
                     </div>
 
                     {/* Corridor / Location */}
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                         Corridor / Location *
                       </label>
                       <select
                         name="location"
                         value={formData.location}
                         onChange={handleInputChange}
-                        className="w-full px-3.5 py-2.5 bg-amber-50/40 border border-amber-100 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white cursor-pointer font-semibold"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-300 cursor-pointer font-medium"
                       >
                         <option value="Gurgaon">Gurgaon (Cyber City & DLF)</option>
                         <option value="Golf Course">Golf Course Road & Ext.</option>
@@ -1538,7 +1532,7 @@ export default function AdminPanelModal({
 
                     {/* Sub Locality */}
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                         Micro-Locality / Sector
                       </label>
                       <input
@@ -1547,20 +1541,20 @@ export default function AdminPanelModal({
                         value={formData.subLocality}
                         onChange={handleInputChange}
                         placeholder="e.g. Sector 76, Southern Peripheral Road"
-                        className="w-full px-3.5 py-2.5 bg-amber-50/40 border border-amber-100 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-300"
                       />
                     </div>
 
                     {/* Service Category */}
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                         Service Category *
                       </label>
                       <select
                         name="serviceType"
                         value={formData.serviceType}
                         onChange={handleInputChange}
-                        className="w-full px-3.5 py-2.5 bg-amber-50/40 border border-amber-100 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white cursor-pointer font-semibold"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-300 cursor-pointer font-medium"
                       >
                         <option value="Fresh Bookings">Fresh Bookings (Developer Direct)</option>
                         <option value="Sale & Purchase">Sale & Purchase (Secondary Resale)</option>
@@ -1575,7 +1569,7 @@ export default function AdminPanelModal({
                     
                     {/* Price Display */}
                     <div className="space-y-1 sm:col-span-2">
-                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                         Price String *
                       </label>
                       <input
@@ -1584,23 +1578,23 @@ export default function AdminPanelModal({
                         value={formData.price}
                         onChange={handleInputChange}
                         placeholder="e.g. ₹ 4.50 Cr or ₹ 95 Lac"
-                        className={`w-full px-3.5 py-2.5 bg-amber-50/40 border rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:bg-white ${
-                          formErrors.price ? 'border-rose-400 focus:ring-rose-500' : 'border-amber-100 focus:ring-amber-500'
+                        className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-300 ${
+                          formErrors.price ? 'border-rose-300 focus:border-rose-400' : 'border-slate-200 focus:border-slate-400'
                         }`}
                       />
-                      {formErrors.price && <p className="text-[11px] text-rose-600 font-semibold">{formErrors.price}</p>}
+                      {formErrors.price && <p className="text-[11px] text-rose-600 font-medium">{formErrors.price}</p>}
                     </div>
 
                     {/* Configuration */}
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                         Configuration
                       </label>
                       <select
                         name="configuration"
                         value={formData.configuration}
                         onChange={handleInputChange}
-                        className="w-full px-3.5 py-2.5 bg-amber-50/40 border border-amber-100 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white cursor-pointer"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:border-slate-400 cursor-pointer"
                       >
                         <option value="2 BHK">2 BHK</option>
                         <option value="3 BHK">3 BHK</option>
@@ -1612,7 +1606,7 @@ export default function AdminPanelModal({
 
                     {/* Area Sq. Ft */}
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                         Super Area (Sq. Ft.)
                       </label>
                       <input
@@ -1621,7 +1615,7 @@ export default function AdminPanelModal({
                         value={formData.areaSqft}
                         onChange={handleInputChange}
                         placeholder="2450"
-                        className="w-full px-3.5 py-2.5 bg-amber-50/40 border border-amber-100 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-300"
                       />
                     </div>
 
@@ -1630,7 +1624,7 @@ export default function AdminPanelModal({
                   {/* Grid 3: Possession, Badge & RERA */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                         Possession Timeline
                       </label>
                       <input
@@ -1639,12 +1633,12 @@ export default function AdminPanelModal({
                         value={formData.possession}
                         onChange={handleInputChange}
                         placeholder="e.g. Ready to Move or Dec 2026"
-                        className="w-full px-3.5 py-2.5 bg-amber-50/40 border border-amber-100 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:border-slate-400"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                         Badge / Tag
                       </label>
                       <input
@@ -1653,12 +1647,12 @@ export default function AdminPanelModal({
                         value={formData.badge}
                         onChange={handleInputChange}
                         placeholder="e.g. Exclusive Launch, Verified Resale"
-                        className="w-full px-3.5 py-2.5 bg-amber-50/40 border border-amber-100 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:border-slate-400"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                         RERA Number
                       </label>
                       <input
@@ -1667,16 +1661,16 @@ export default function AdminPanelModal({
                         value={formData.rera}
                         onChange={handleInputChange}
                         placeholder="e.g. RC/REP/HARERA/GGM/2024"
-                        className="w-full px-3.5 py-2.5 bg-amber-50/40 border border-amber-100 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:border-slate-400"
                       />
                     </div>
                   </div>
 
                   {/* Image URL & 1-Click Preset Selector */}
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center justify-between">
+                    <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider flex items-center justify-between">
                       <span>Image URL *</span>
-                      <span className="text-[11px] font-normal text-slate-400">Or pick from curated presets below</span>
+                      <span className="text-[11px] font-normal text-slate-500">Or pick from curated presets below</span>
                     </label>
                     <div className="flex gap-2">
                       <input
@@ -1685,21 +1679,21 @@ export default function AdminPanelModal({
                         value={formData.image}
                         onChange={handleInputChange}
                         placeholder="https://images.unsplash.com/..."
-                        className={`flex-1 px-3.5 py-2.5 bg-amber-50/40 border rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:bg-white ${
-                          formErrors.image ? 'border-rose-400 focus:ring-rose-500' : 'border-amber-100 focus:ring-amber-500'
+                        className={`flex-1 px-3.5 py-2.5 bg-white border rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-300 ${
+                          formErrors.image ? 'border-rose-300 focus:border-rose-400' : 'border-slate-200 focus:border-slate-400'
                         }`}
                       />
                       {formData.image && (
-                        <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-amber-100">
+                        <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-slate-200 shadow-2xs">
                           <img src={formData.image} alt="Preview" className="w-full h-full object-cover" />
                         </div>
                       )}
                     </div>
-                    {formErrors.image && <p className="text-[11px] text-rose-600 font-semibold">{formErrors.image}</p>}
+                    {formErrors.image && <p className="text-[11px] text-rose-600 font-medium">{formErrors.image}</p>}
 
                     {/* Quick Presets */}
                     <div className="pt-2">
-                      <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1.5">
+                      <span className="text-[10px] uppercase font-semibold text-slate-500 tracking-wider block mb-1.5">
                         Click to Use Preset Luxury Visual:
                       </span>
                       <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
@@ -1710,12 +1704,12 @@ export default function AdminPanelModal({
                             onClick={() => handlePresetImageSelect(preset.url)}
                             className={`p-1.5 rounded-xl border text-left flex flex-col items-center gap-1 transition-all cursor-pointer ${
                               formData.image === preset.url
-                                ? 'border-amber-600 bg-amber-50 ring-1 ring-amber-600'
-                                : 'border-amber-100 bg-white hover:bg-amber-50/50'
+                                ? 'border-amber-600 bg-amber-50/50 ring-1 ring-amber-500/20'
+                                : 'border-slate-200 bg-white hover:bg-slate-50'
                             }`}
                           >
                             <img src={preset.url} alt={preset.label} className="w-full h-10 object-cover rounded-lg" />
-                            <span className="text-[9px] font-medium text-slate-700 truncate w-full text-center">
+                            <span className="text-[10px] font-medium text-slate-700 truncate w-full text-center">
                               {preset.label}
                             </span>
                           </button>
@@ -1726,7 +1720,7 @@ export default function AdminPanelModal({
 
                   {/* Description */}
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                       Full Property Description *
                     </label>
                     <textarea
@@ -1735,16 +1729,16 @@ export default function AdminPanelModal({
                       value={formData.description}
                       onChange={handleInputChange}
                       placeholder="Describe the architectural highlights, views, connectivity, and luxurious interior appointments..."
-                      className={`w-full px-3.5 py-2.5 bg-amber-50/40 border rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:bg-white ${
-                        formErrors.description ? 'border-rose-400 focus:ring-rose-500' : 'border-amber-100 focus:ring-amber-500'
+                      className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-xs font-normal text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-300 ${
+                        formErrors.description ? 'border-rose-300 focus:border-rose-400' : 'border-slate-200 focus:border-slate-400'
                       }`}
                     />
-                    {formErrors.description && <p className="text-[11px] text-rose-600 font-semibold">{formErrors.description}</p>}
+                    {formErrors.description && <p className="text-[11px] text-rose-600 font-medium">{formErrors.description}</p>}
                   </div>
 
                   {/* Amenities */}
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    <label className="text-xs font-semibold text-slate-800 uppercase tracking-wider block">
                       Amenities (Comma separated)
                     </label>
                     <input
@@ -1753,40 +1747,40 @@ export default function AdminPanelModal({
                       value={formData.amenities}
                       onChange={handleInputChange}
                       placeholder="e.g. Golf View, Private Lift, Olympic Pool, Concierge"
-                      className="w-full px-3.5 py-2.5 bg-amber-50/40 border border-amber-100 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white"
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:border-slate-400"
                     />
                   </div>
 
                   {/* Featured Checkbox */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 pt-1">
                     <input
                       type="checkbox"
                       id="featured"
                       name="featured"
                       checked={formData.featured}
                       onChange={handleInputChange}
-                      className="rounded border-amber-200 text-amber-600 focus:ring-amber-500 h-4 w-4 cursor-pointer"
+                      className="rounded border-slate-300 text-amber-600 focus:ring-amber-500 h-4 w-4 cursor-pointer"
                     />
-                    <label htmlFor="featured" className="text-xs font-semibold text-slate-800 cursor-pointer">
+                    <label htmlFor="featured" className="text-xs font-medium text-slate-800 cursor-pointer">
                       Feature this listing prominently in the spotlight
                     </label>
                   </div>
 
                   {/* Submit Buttons */}
-                  <div className="pt-4 border-t border-amber-100 flex items-center justify-end gap-3">
+                  <div className="pt-4 border-t border-slate-200 flex items-center justify-end gap-3">
                     <button
                       type="button"
                       onClick={() => setActiveTab('inventory')}
-                      className="px-5 py-2.5 rounded-xl border border-amber-100 text-slate-700 hover:bg-amber-50 text-xs font-semibold transition-colors cursor-pointer"
+                      className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-medium transition-colors cursor-pointer"
                     >
                       Cancel
                     </button>
 
                     <button
                       type="submit"
-                      className="px-6 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+                      className="px-5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                     >
-                      <PlusCircle className="w-4 h-4 text-amber-400" />
+                      <PlusCircle className="w-3.5 h-3.5 text-amber-400" />
                       <span>Publish Listing</span>
                     </button>
                   </div>

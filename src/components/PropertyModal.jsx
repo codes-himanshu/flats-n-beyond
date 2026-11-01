@@ -1,8 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, MapPin, BedDouble, Bath, Maximize2, Calendar, ShieldCheck, CheckCircle2, Calculator, MessageCircle, Phone, ArrowRight, ChevronLeft, ChevronRight, Camera } from 'lucide-react';
 
 export default function PropertyModal({ property, onClose, onScheduleVisit }) {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
+
+  // Background Scroll Lock (Body Overflow Fix)
+  useEffect(() => {
+    if (!property) return;
+
+    const prevOverflow = document.body.style.overflow;
+    const prevPaddingRight = document.body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+
+    document.body.style.overflow = 'hidden';
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    return () => {
+      document.body.style.overflow = prevOverflow || '';
+      document.body.style.paddingRight = prevPaddingRight || '';
+    };
+  }, [property]);
 
   // EMI Calculator State
   const defaultLoan = Math.round(((property && property.priceNum) || 50000000) * 0.8);
@@ -51,8 +70,8 @@ export default function PropertyModal({ property, onClose, onScheduleVisit }) {
   const whatsappUrl = `https://wa.me/919811054000?text=${whatsappMessage}`;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fade-in text-left">
-      <div className="relative bg-white rounded-3xl max-w-4xl w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-amber-100">
+    <div className="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fade-in text-left">
+      <div className="relative bg-white rounded-3xl max-w-4xl w-full max-h-[92vh] overflow-y-auto overscroll-contain shadow-2xl border border-amber-100">
         
         {/* Floating Close Button */}
         <button

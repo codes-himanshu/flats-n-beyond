@@ -30,8 +30,13 @@ const FALLBACK_DATA_DIR = path.join(__dirname, 'server_data');
 const FALLBACK_ENQUIRIES_FILE = path.join(FALLBACK_DATA_DIR, 'enquiries_fallback.json');
 const FALLBACK_PROPERTIES_FILE = path.join(FALLBACK_DATA_DIR, 'properties_fallback.json');
 
-if (!fs.existsSync(FALLBACK_DATA_DIR)) {
-  fs.mkdirSync(FALLBACK_DATA_DIR, { recursive: true });
+try {
+  if (!fs.existsSync(FALLBACK_DATA_DIR)) {
+    fs.mkdirSync(FALLBACK_DATA_DIR, { recursive: true });
+  }
+} catch (err) {
+  // Gracefully handle read-only serverless filesystems (e.g. Vercel)
+  console.warn('[Flats-n-Beyond Server] Local disk storage skipped in serverless environment.');
 }
 
 // Seed Initial Enquiries for Demonstration
@@ -201,8 +206,14 @@ let dbState = {
   message: 'Connecting to MongoDB Atlas...'
 };
 
+let isConnectingMongo = false;
+
 // Connect to MongoDB Atlas
 const connectToMongoDB = async () => {
+  if (mongoose.connection.readyState === 1) return;
+  if (isConnectingMongo) return;
+  isConnectingMongo = true;
+
   const uri = process.env.MONGODB_URI ? process.env.MONGODB_URI.trim() : '';
 
   if (!uri) {
@@ -215,6 +226,7 @@ const connectToMongoDB = async () => {
       message: 'MongoDB Atlas URI is not configured yet. Running in resilient local fallback mode.'
     };
     console.log('[Flats-n-Beyond Server] MONGODB_URI not provided. Running in fallback mode.');
+    isConnectingMongo = false;
     return;
   }
 
@@ -274,11 +286,23 @@ const connectToMongoDB = async () => {
       message: `Failed to connect to MongoDB Atlas (${err.message}). Resilient fallback storage is active.`
     };
     console.error('[Flats-n-Beyond Server] MongoDB Atlas connection error:', err.message);
+  } finally {
+    isConnectingMongo = false;
   }
 };
 
 // Initialize connection
 connectToMongoDB();
+
+// Ensure DB connection is active on serverless invocations
+app.use(async (req, res, next) => {
+  if (mongoose.connection.readyState !== 1 && process.env.MONGODB_URI) {
+    try {
+      await connectToMongoDB();
+    } catch {}
+  }
+  next();
+});
 
 // Admin Authentication Guard Middleware (Validates Passcode or Active 2-Step Session Token)
 const verifyAdmin = (req, res, next) => {
@@ -563,6 +587,9 @@ app.post('/api/properties', verifyAdmin, async (req, res) => {
     if (dbState.connected && mongoose.connection.readyState === 1) {
       const doc = new Property(propertyPayload);
       const savedDoc = await doc.save();
+      // Keep persistent fallback file in sync
+      fallbackProperties = [propertyPayload, ...fallbackProperties.filter((p) => p.id !== propertyPayload.id)];
+      saveFallbackProperties(fallbackProperties);
       console.log(`[Flats-n-Beyond] Added new listing "${savedDoc.title}" to MongoDB Atlas (_id: ${savedDoc._id})`);
       return res.status(201).json({
         success: true,
@@ -570,7 +597,7 @@ app.post('/api/properties', verifyAdmin, async (req, res) => {
         property: savedDoc
       });
     } else {
-      fallbackProperties.unshift(propertyPayload);
+      fallbackProperties = [propertyPayload, ...fallbackProperties.filter((p) => p.id !== propertyPayload.id)];
       saveFallbackProperties(fallbackProperties);
       console.log(`[Flats-n-Beyond] Saved new listing "${propertyPayload.title}" to local fallback storage`);
       return res.status(201).json({
@@ -595,7 +622,9 @@ app.delete('/api/properties/:id', verifyAdmin, async (req, res) => {
       if (!deleted) {
         return res.status(404).json({ error: 'Property not found in MongoDB Atlas' });
       }
-      console.log(`[Flats-n-Beyond] Removed property "${id}" from MongoDB Atlas`);
+      fallbackProperties = fallbackProperties.filter((p) => p.id !== id);
+      saveFallbackProperties(fallbackProperties);
+      console.log(`[Flats-n-Beyond] Removed property "${id}" from MongoDB Atlas and persistent storage`);
       return res.json({ success: true, message: `Property ${id} deleted from MongoDB Atlas` });
     } else {
       const initialLen = fallbackProperties.length;
@@ -698,7 +727,14 @@ app.post('/api/enquiries', async (req, res) => {
     if (dbState.connected && mongoose.connection.readyState === 1) {
       const doc = new Enquiry(newEnquiryPayload);
       const savedDoc = await doc.save();
-      console.log(`[Flats-n-Beyond] Saved new enquiry from "${name}" to MongoDB Atlas (_id: ${savedDoc._id})`);
+      const persistentRecord = {
+        _id: String(savedDoc._id),
+        ...newEnquiryPayload,
+        createdAt: savedDoc.createdAt || new Date().toISOString()
+      };
+      fallbackEnquiries = [persistentRecord, ...fallbackEnquiries.filter((e) => String(e._id) !== String(savedDoc._id))];
+      saveFallbackEnquiries(fallbackEnquiries);
+      console.log(`[Flats-n-Beyond] Saved new enquiry from "${name}" to MongoDB Atlas and persistent backup (_id: ${savedDoc._id})`);
       return res.status(201).json({
         success: true,
         storage: 'mongodb_atlas',
@@ -710,7 +746,7 @@ app.post('/api/enquiries', async (req, res) => {
         ...newEnquiryPayload,
         createdAt: new Date().toISOString()
       };
-      fallbackEnquiries.unshift(fallbackDoc);
+      fallbackEnquiries = [fallbackDoc, ...fallbackEnquiries];
       saveFallbackEnquiries(fallbackEnquiries);
       console.log(`[Flats-n-Beyond] Saved new enquiry from "${name}" to fallback storage`);
       return res.status(201).json({
@@ -740,6 +776,10 @@ app.patch('/api/enquiries/:id', async (req, res) => {
       if (!updated) {
         return res.status(404).json({ error: 'Enquiry not found in MongoDB Atlas' });
       }
+      fallbackEnquiries = fallbackEnquiries.map((e) =>
+        e._id === id || String(e._id) === id ? { ...e, ...updateData } : e
+      );
+      saveFallbackEnquiries(fallbackEnquiries);
       return res.json({ success: true, enquiry: updated });
     } else {
       const idx = fallbackEnquiries.findIndex((e) => e._id === id);
@@ -766,7 +806,9 @@ app.delete('/api/enquiries/:id', async (req, res) => {
       if (!deleted) {
         return res.status(404).json({ error: 'Enquiry not found in MongoDB Atlas' });
       }
-      return res.json({ success: true, message: 'Enquiry removed from MongoDB Atlas' });
+      fallbackEnquiries = fallbackEnquiries.filter((e) => e._id !== id && String(e._id) !== id);
+      saveFallbackEnquiries(fallbackEnquiries);
+      return res.json({ success: true, message: 'Enquiry removed from MongoDB Atlas and backup storage' });
     } else {
       const initialLen = fallbackEnquiries.length;
       fallbackEnquiries = fallbackEnquiries.filter((e) => e._id !== id);
@@ -809,7 +851,12 @@ app.post('/api/test-connection', async (req, res) => {
   }
 });
 
-// Start listening
-app.listen(PORT, () => {
-  console.log(`[Flats-n-Beyond Server] Backend API running at http://localhost:${PORT}`);
-});
+// Start listening when executed directly in Node.js (local development)
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`[Flats-n-Beyond Server] Backend API running at http://localhost:${PORT}`);
+  });
+}
+
+// Export for serverless environments (e.g. Vercel)
+export default app;

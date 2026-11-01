@@ -138,6 +138,18 @@ export async function submitEnquiry(enquiryData) {
 
     if (res.ok) {
       const json = await res.json();
+      if (json.enquiry) {
+        try {
+          const current = getLocalBackup();
+          const cleanLead = {
+            _id: String(json.enquiry._id || json.enquiry.id || `lead-${Date.now()}`),
+            ...enquiryData,
+            status: json.enquiry.status || 'New',
+            createdAt: json.enquiry.createdAt || new Date().toISOString()
+          };
+          saveLocalBackup([cleanLead, ...current.filter((l) => String(l._id) !== String(cleanLead._id))]);
+        } catch {}
+      }
       return json;
     }
   } catch (err) {

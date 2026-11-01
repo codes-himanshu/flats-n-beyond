@@ -63,12 +63,24 @@ export async function addProperty(propertyData, passcode = DEFAULT_ADMIN_PASSCOD
 
     if (res.ok) {
       const json = await res.json();
+      try {
+        const current = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+        const updated = [propertyData, ...current.filter((p) => p.id !== propertyData.id)];
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.warn('LocalStorage save warning:', e);
+      }
       return json;
     }
     const errJson = await res.json().catch(() => ({}));
     throw new Error(errJson.error || 'Failed to add property to database');
   } catch (err) {
     console.warn('API add failed, saving to local cache:', err.message);
+    try {
+      const current = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+      const updated = [propertyData, ...current.filter((p) => p.id !== propertyData.id)];
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+    } catch {}
     return {
       success: true,
       storage: 'local_cache_fallback',
@@ -96,12 +108,24 @@ export async function deleteProperty(propertyId, passcode = DEFAULT_ADMIN_PASSCO
     });
 
     if (res.ok) {
+      try {
+        const current = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+        const updated = current.filter((p) => p.id !== propertyId);
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.warn('LocalStorage delete warning:', e);
+      }
       return await res.json();
     }
     const errJson = await res.json().catch(() => ({}));
     throw new Error(errJson.error || 'Failed to delete property from database');
   } catch (err) {
     console.warn('API delete failed, removing from local cache:', err.message);
+    try {
+      const current = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+      const updated = current.filter((p) => p.id !== propertyId);
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+    } catch {}
     return {
       success: true,
       storage: 'local_cache_fallback',

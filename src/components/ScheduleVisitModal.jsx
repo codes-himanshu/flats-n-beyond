@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Calendar, Phone, Mail, User, ShieldCheck, CheckCircle2, Loader2 } from 'lucide-react';
 import { submitEnquiry } from '../services/enquiryService';
 
@@ -16,6 +16,25 @@ export default function ScheduleVisitModal({ isOpen, onClose, selectedProperty, 
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState({});
+
+  // Background Scroll Lock (Body Overflow Fix)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const prevOverflow = document.body.style.overflow;
+    const prevPaddingRight = document.body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+
+    document.body.style.overflow = 'hidden';
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    return () => {
+      document.body.style.overflow = prevOverflow || '';
+      document.body.style.paddingRight = prevPaddingRight || '';
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -76,8 +95,8 @@ export default function ScheduleVisitModal({ isOpen, onClose, selectedProperty, 
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fade-in text-left">
-      <div className="relative bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl border border-amber-100">
+    <div className="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fade-in text-left">
+      <div className="relative bg-white rounded-3xl max-w-lg w-full overflow-hidden overscroll-contain shadow-2xl border border-amber-100">
         
         {/* Header */}
         <div className="p-6 bg-slate-950 text-white flex items-center justify-between">
